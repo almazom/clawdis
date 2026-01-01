@@ -275,6 +275,44 @@ Z.AI models are available as `zai/<model>` (e.g. `zai/glm-4.7`) and require
 - `timeoutSec`: auto-kill after this runtime (seconds, default 1800)
 - `cleanupMs`: how long to keep finished sessions in memory (ms, default 1800000)
 
+`agent.vision` configures optional image recognition via the external Gemini
+wrapper (`gemini_vision.sh`):
+- `enabled`: enable image recognition for inbound image messages.
+- `scriptPath`: path to the wrapper script (e.g. `/home/almaz/TOOLS/get_via_gemini_vision/gemini_vision.sh`).
+- `configPath`: path to the wrapper YAML config (`prompts.yaml`).
+- `promptKey`: default prompt key for the wrapper (can also be provided via the YAML default).
+- `promptKeyOcr`: prompt key to use when an inbound image message asks to read/extract text.
+- `model`: optional model override passed to the wrapper.
+- `outputFormat`: override wrapper output format (`text`, `json`, `stream-json`).
+- `responseJson`: force JSON response schema on/off for the wrapper.
+- `tail`: override prompt tail text for this call.
+- `noTail`: disable prompt tail for this call.
+- `logPath`: optional file to append per-call vision logs.
+- `logOutputChars`: max chars to log from stdout/stderr (default 4000).
+- `timeoutSeconds`: timeout for the wrapper call.
+
+Example:
+```json5
+{
+  agent: {
+    vision: {
+      enabled: true,
+      scriptPath: "/home/almaz/TOOLS/get_via_gemini_vision/gemini_vision.sh",
+      configPath: "/home/almaz/TOOLS/get_via_gemini_vision/config/prompts.yaml",
+      promptKey: "describe_image",
+      promptKeyOcr: "ocr_extract",
+      model: "gemini-2.5-flash-lite",
+      outputFormat: "json",
+      responseJson: true,
+      tail: "Respond in Russian.",
+      logPath: "/home/almaz/.clawdis/vision.log",
+      logOutputChars: 4000,
+      timeoutSeconds: 60
+    }
+  }
+}
+```
+
 `agent.maxConcurrent` sets the maximum number of embedded agent runs that can
 execute in parallel across sessions. Each session is still serialized (one run
 per session key at a time). Default: 1.

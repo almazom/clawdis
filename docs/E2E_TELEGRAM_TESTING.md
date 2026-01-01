@@ -56,6 +56,20 @@ curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo"
 
 If `pending_update_count > 0`, messages are queued but not processed yet.
 
+### 5. Image Input Smoke Test (Manual)
+
+1. In Telegram, send a photo to the bot with a caption like:
+   - "What is in this image?"
+   - "прочитай текст на фото" (OCR intent)
+2. Expect a chat action (`upload_photo`), then a reply with a description.
+3. Reply to the same photo with a follow-up question (e.g. "What does the text say?").
+   - Expect the bot to reuse the stored vision summary for follow-ups.
+
+Record the result (manual):
+| Date | Chat ID | promptKey | Result | Notes |
+| ---- | ------- | --------- | ------ | ----- |
+|      |         |           |        |       |
+
 ## Detailed Testing Scripts
 
 ### Test Script: Full E2E

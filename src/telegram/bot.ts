@@ -75,12 +75,13 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       const isGroup =
         msg.chat.type === "group" || msg.chat.type === "supergroup";
 
-      const sendTyping = async () => {
+      const action = resolveChatAction(msg);
+      const sendActivity = async () => {
         try {
-          await bot.api.sendChatAction(chatId, "typing");
+          await bot.api.sendChatAction(chatId, action);
         } catch (err) {
           logVerbose(
-            `telegram typing cue failed for chat ${chatId}: ${String(err)}`,
+            `telegram chat action failed for chat ${chatId}: ${String(err)}`,
           );
         }
       };
@@ -111,6 +112,10 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       ) {
         logger.info({ chatId, reason: "no-mention" }, "skipping group message");
         return;
+      }
+
+      if (action !== "typing") {
+        void sendActivity();
       }
 
       const media = await resolveMedia(
@@ -185,7 +190,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
 
       const replyResult = await getReplyFromConfig(
         ctxPayload,
-        { onReplyStart: sendTyping },
+        { onReplyStart: sendActivity },
         cfg,
       );
       const replies = replyResult
@@ -310,6 +315,20 @@ function hasBotMention(msg: TelegramMessage, botUsername: string) {
     if (slice.toLowerCase() === `@${botUsername}`) return true;
   }
   return false;
+}
+
+function resolveChatAction(msg: TelegramMessage) {
+  if (msg.photo) return "upload_photo";
+  if (msg.video) return "upload_video";
+  if (msg.audio || msg.voice) return "upload_audio";
+  if (msg.document) {
+    const mime = msg.document.mime_type ?? "";
+    if (mime.startsWith("image/")) return "upload_photo";
+    if (mime.startsWith("video/")) return "upload_video";
+    if (mime.startsWith("audio/")) return "upload_audio";
+    return "upload_document";
+  }
+  return "typing";
 }
 
 async function resolveMedia(

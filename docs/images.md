@@ -39,6 +39,24 @@ CLAWDIS is now **web-only** (Baileys). This document captures the current media 
   - `{{MediaPath}}` local temp path written before running the command.
 - Audio transcription (if configured) runs before templating and can replace `Body` with the transcript.
 
+## Image Recognition (Gemini)
+- When `agent.vision.enabled` is true and the inbound media is an image, CLAWDIS
+  invokes the configured `gemini_vision.sh` wrapper and injects its output into
+  the agent prompt as:
+  - `[vision] <summary>`
+  - `[vision:data] <json>`
+- For inbound image messages, CLAWDIS also prefixes the user-visible reply with
+  a short description line (`Я вижу: ...`) so the user sees what was recognized.
+- If `agent.vision.promptKeyOcr` is set and the inbound message asks to
+  read/extract text (OCR keywords like "ocr", "read text", "прочитай текст"),
+  CLAWDIS uses that prompt key instead of the default.
+- If `agent.vision.logPath` is set, CLAWDIS appends JSONL entries for each
+  vision call (start/success/error), including stdout/stderr snippets.
+- If a follow-up message replies to an image (`ReplyToBody` is `<media:image>`),
+  CLAWDIS reuses the last stored vision summary/data from the session.
+- Prompts and schemas live in the wrapper YAML config (no hardcoded prompts in
+  CLAWDIS).
+
 ## Limits & Errors
 - Images: ~6 MB cap after recompression.
 - Audio/voice/video: 16 MB cap; documents: 100 MB cap.

@@ -182,6 +182,35 @@ export type RoutingConfig = {
   };
 };
 
+export type VisionConfig = {
+  /** Enable image recognition via external CLI wrapper. */
+  enabled?: boolean;
+  /** Path to gemini_vision.sh (or compatible wrapper). */
+  scriptPath?: string;
+  /** Path to prompts/config YAML for the wrapper. */
+  configPath?: string;
+  /** Default prompt key to use when recognizing images. */
+  promptKey?: string;
+  /** Prompt key to use for OCR/text extraction requests. */
+  promptKeyOcr?: string;
+  /** Optional model override for the wrapper. */
+  model?: string;
+  /** Optional output format override (text | json | stream-json). */
+  outputFormat?: "text" | "json" | "stream-json";
+  /** Toggle wrapper response JSON schema forcing. */
+  responseJson?: boolean;
+  /** Override prompt tail text for this call. */
+  tail?: string;
+  /** Disable prompt tail for this call. */
+  noTail?: boolean;
+  /** Optional log file path for vision wrapper output. */
+  logPath?: string;
+  /** Max chars to log from stdout/stderr per call. */
+  logOutputChars?: number;
+  /** Timeout for the wrapper call (seconds). */
+  timeoutSeconds?: number;
+};
+
 export type MessagesConfig = {
   messagePrefix?: string; // Prefix added to all inbound messages (default: "[clawdis]" if no allowFrom, else "")
   responsePrefix?: string; // Prefix auto-added to all outbound replies (e.g., "🦞")
@@ -373,6 +402,8 @@ export type ClawdisConfig = {
     timeoutSeconds?: number;
     /** Max inbound media size in MB for agent-visible attachments (text note or future image attach). */
     mediaMaxMb?: number;
+    /** Image recognition settings (gemini_vision.sh wrapper). */
+    vision?: VisionConfig;
     typingIntervalSeconds?: number;
     /** Periodic background heartbeat runs. */
     heartbeat?: {
@@ -496,6 +527,24 @@ const QueueModeBySurfaceSchema = z
 const TranscribeAudioSchema = z
   .object({
     command: z.array(z.string()),
+    timeoutSeconds: z.number().int().positive().optional(),
+  })
+  .optional();
+
+const VisionSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    scriptPath: z.string().optional(),
+    configPath: z.string().optional(),
+    promptKey: z.string().optional(),
+    promptKeyOcr: z.string().optional(),
+    model: z.string().optional(),
+    outputFormat: z.enum(["text", "json", "stream-json"]).optional(),
+    responseJson: z.boolean().optional(),
+    tail: z.string().optional(),
+    noTail: z.boolean().optional(),
+    logPath: z.string().optional(),
+    logOutputChars: z.number().int().nonnegative().optional(),
     timeoutSeconds: z.number().int().positive().optional(),
   })
   .optional();
@@ -707,6 +756,7 @@ const ClawdisSchema = z.object({
       verboseDefault: z.union([z.literal("off"), z.literal("on")]).optional(),
       timeoutSeconds: z.number().int().positive().optional(),
       mediaMaxMb: z.number().positive().optional(),
+      vision: VisionSchema,
       typingIntervalSeconds: z.number().int().positive().optional(),
       heartbeat: HeartbeatSchema,
       maxConcurrent: z.number().int().positive().optional(),
@@ -929,6 +979,28 @@ function applyIdentityDefaults(cfg: ClawdisConfig): ClawdisConfig {
   return mutated ? next : cfg;
 }
 
+function warnOnVisionConfig(cfg: ClawdisConfig): void {
+  const vision = cfg.agent?.vision;
+  if (!vision?.enabled) return;
+  const scriptPath = vision.scriptPath?.trim();
+  if (!scriptPath) {
+    console.warn(
+      "agent.vision.enabled is true but agent.vision.scriptPath is empty",
+    );
+    return;
+  }
+  try {
+    fs.accessSync(scriptPath, fs.constants.X_OK);
+  } catch (err) {
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code?: unknown }).code)
+        : undefined;
+    const suffix = code ? ` (${code})` : "";
+    console.warn(`agent.vision scriptPath is not executable: ${scriptPath}${suffix}`);
+  }
+}
+
 export function loadConfig(): ClawdisConfig {
   // Read config file (JSON5) if present.
   const configPath = CONFIG_PATH_CLAWDIS;
@@ -945,7 +1017,9 @@ export function loadConfig(): ClawdisConfig {
       }
       return {};
     }
-    return applyIdentityDefaults(validated.data as ClawdisConfig);
+    const config = applyIdentityDefaults(validated.data as ClawdisConfig);
+    warnOnVisionConfig(config);
+    return config;
   } catch (err) {
     console.error(`Failed to read config at ${configPath}`, err);
     return {};

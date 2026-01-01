@@ -10,6 +10,13 @@ import { normalizeE164 } from "../utils.js";
 
 export type SessionScope = "per-sender" | "global";
 
+export type VisionMemory = {
+  summary?: string;
+  data?: unknown;
+  mediaPath?: string;
+  updatedAt: number;
+};
+
 export type SessionEntry = {
   sessionId: string;
   updatedAt: number;
@@ -29,6 +36,7 @@ export type SessionEntry = {
   contextTokens?: number;
   lastChannel?: "whatsapp" | "telegram" | "discord" | "webchat";
   lastTo?: string;
+  lastVision?: VisionMemory;
   skillsSnapshot?: SessionSkillSnapshot;
 };
 

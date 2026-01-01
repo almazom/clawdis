@@ -63,6 +63,7 @@ import {
 } from "./thinking.js";
 import { SILENT_REPLY_TOKEN } from "./tokens.js";
 import { isAudio, transcribeInboundAudio } from "./transcription.js";
+import { parseGeminiVisionOutput, runGeminiVision } from "./vision.js";
 import type { GetReplyOptions, ReplyPayload } from "./types.js";
 
 export type { GetReplyOptions, ReplyPayload } from "./types.js";
@@ -70,11 +71,49 @@ export type { GetReplyOptions, ReplyPayload } from "./types.js";
 const ABORT_TRIGGERS = new Set(["stop", "esc", "abort", "wait", "exit"]);
 const ABORT_MEMORY = new Map<string, boolean>();
 const SYSTEM_MARK = "⚙️";
+const OCR_INTENT_PATTERNS = [
+  /\bocr\b/i,
+  /\bextract\b/i,
+  /\btext\b/i,
+  /\btranscribe\b/i,
+  /\bread\b/i,
+  /\bscan\b/i,
+  /\btable\b/i,
+  /текст/i,
+  /прочит/i,
+  /распозн/i,
+  /извлеч/i,
+  /скан/i,
+  /таблиц/i,
+];
 
 const BARE_SESSION_RESET_PROMPT =
   "A new session was started via /new or /reset. Say hi briefly (1-2 sentences) and ask what the user wants to do next. Do not mention internal steps, files, tools, or reasoning.";
 
 type QueueMode = "queue" | "interrupt";
+
+function buildVisionSummaryLine(summary: string): string {
+  const trimmed = summary.trim();
+  if (!trimmed) return "";
+  const lowered = trimmed.toLowerCase();
+  if (lowered.startsWith("я вижу")) return trimmed;
+  return `Я вижу: ${trimmed}`;
+}
+
+function injectVisionSummary(
+  payloads: ReplyPayload[],
+  summaryLine: string,
+): ReplyPayload[] {
+  if (!summaryLine || payloads.length === 0) return payloads;
+  return payloads.map((payload, index) => {
+    if (index !== 0) return payload;
+    const existing = payload.text?.trim();
+    if (!existing || existing === SILENT_REPLY_TOKEN) {
+      return { ...payload, text: summaryLine };
+    }
+    return { ...payload, text: `${summaryLine}\n\n${payload.text}` };
+  });
+}
 
 export function extractThinkDirective(body?: string): {
   cleaned: string;
@@ -178,6 +217,12 @@ function stripStructuralPrefixes(text: string): string {
     .replace(/^[ \t]*[A-Za-z0-9+()\-_. ]+:\s*/gm, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function hasOcrIntent(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return OCR_INTENT_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
 function stripMentions(
@@ -324,6 +369,11 @@ export async function getReplyFromConfig(
     await startTypingLoop();
   };
   let transcribedText: string | undefined;
+  let visionSummary: string | undefined;
+  let visionData: unknown;
+  const isGroup =
+    typeof ctx.From === "string" &&
+    (ctx.From.includes("@g.us") || ctx.From.startsWith("group:"));
 
   // Optional audio transcription before templating/session handling.
   if (cfg.routing?.transcribeAudio && isAudio(ctx.MediaType)) {
@@ -335,6 +385,75 @@ export async function getReplyFromConfig(
       logVerbose("Replaced Body with audio transcript for reply flow");
     }
   }
+
+  const visionCfg = agentCfg?.vision;
+  if (
+    visionCfg?.enabled &&
+    ctx.MediaPath &&
+    ctx.MediaType?.startsWith("image/")
+  ) {
+    const scriptPath = visionCfg.scriptPath?.trim();
+    const visionTextRaw = stripStructuralPrefixes(ctx.Body ?? "");
+    const visionText = isGroup
+      ? stripMentions(visionTextRaw, ctx, cfg)
+      : visionTextRaw;
+    const wantsOcr = hasOcrIntent(visionText);
+    const promptKey =
+      wantsOcr && visionCfg.promptKeyOcr
+        ? visionCfg.promptKeyOcr
+        : visionCfg.promptKey;
+    if (!scriptPath) {
+      logVerbose("Vision enabled but agent.vision.scriptPath is empty");
+    } else {
+      logVerbose(
+        `Vision promptKey=${promptKey ?? "<default>"} ocrIntent=${wantsOcr}`,
+      );
+      try {
+        const { stdout, stderr } = await runGeminiVision({
+          scriptPath,
+          files: [ctx.MediaPath],
+          configPath: visionCfg.configPath,
+          promptKey,
+          model: visionCfg.model,
+          outputFormat: visionCfg.outputFormat,
+          responseJson: visionCfg.responseJson,
+          tail: visionCfg.tail,
+          noTail: visionCfg.noTail,
+          timeoutSeconds: visionCfg.timeoutSeconds,
+          logPath: visionCfg.logPath,
+          logOutputChars: visionCfg.logOutputChars,
+        });
+        if (stderr?.trim()) {
+          const trimmed = stderr.trim();
+          const snippet =
+            trimmed.length > 400 ? `${trimmed.slice(0, 400)}…` : trimmed;
+          logVerbose(`Vision stderr: ${snippet}`);
+        }
+        const parsed = parseGeminiVisionOutput(stdout);
+        visionSummary = parsed.response?.trim();
+        visionData = parsed.data;
+        if (visionSummary) {
+          logVerbose(
+            `Vision summary available (${visionSummary.length} chars)`,
+          );
+        }
+      } catch (err) {
+        defaultRuntime.error?.(
+          `Image recognition failed: ${String(err)}`,
+        );
+      }
+    }
+  }
+
+  const visionMemory =
+    visionSummary || visionData !== undefined
+      ? {
+          summary: visionSummary,
+          data: visionData,
+          mediaPath: ctx.MediaPath,
+          updatedAt: Date.now(),
+        }
+      : undefined;
 
   // Optional session handling (conversation reuse + /new resets)
   const mainKey = sessionCfg?.mainKey ?? "main";
@@ -362,9 +481,6 @@ export async function getReplyFromConfig(
   let persistedModelOverride: string | undefined;
   let persistedProviderOverride: string | undefined;
 
-  const isGroup =
-    typeof ctx.From === "string" &&
-    (ctx.From.includes("@g.us") || ctx.From.startsWith("group:"));
   const triggerBodyNormalized = stripStructuralPrefixes(ctx.Body ?? "")
     .trim()
     .toLowerCase();
@@ -429,6 +545,7 @@ export async function getReplyFromConfig(
     modelOverride: persistedModelOverride ?? baseEntry?.modelOverride,
     providerOverride: persistedProviderOverride ?? baseEntry?.providerOverride,
     queueMode: baseEntry?.queueMode,
+    lastVision: visionMemory ?? baseEntry?.lastVision,
   };
   sessionStore[sessionKey] = sessionEntry;
   await saveSessionStore(storePath, sessionStore);
@@ -1124,11 +1241,28 @@ export async function getReplyFromConfig(
   const mediaNote = ctx.MediaPath?.length
     ? `[media attached: ${ctx.MediaPath}${ctx.MediaType ? ` (${ctx.MediaType})` : ""}${ctx.MediaUrl ? ` | ${ctx.MediaUrl}` : ""}]`
     : undefined;
+  const replyToImage =
+    typeof ctx.ReplyToBody === "string" &&
+    ctx.ReplyToBody.includes("<media:image>");
+  const priorVision =
+    !visionMemory && replyToImage ? sessionEntry?.lastVision : undefined;
+  const effectiveVision = visionMemory ?? priorVision;
+  const visionSummaryNote = effectiveVision?.summary
+    ? `[vision] ${effectiveVision.summary}`
+    : undefined;
+  const visionDataNote =
+    effectiveVision?.data !== undefined
+      ? `[vision:data] ${JSON.stringify(effectiveVision.data)}`
+      : undefined;
   const mediaReplyHint = mediaNote
     ? "To send an image back, add a line like: MEDIA:https://example.com/image.jpg (no spaces). Keep caption in the text body."
     : undefined;
-  let commandBody = mediaNote
-    ? [mediaNote, mediaReplyHint, prefixedBody ?? ""]
+  const visionNotes = [visionSummaryNote, visionDataNote].filter(Boolean);
+  const commandNotes = [mediaNote, ...visionNotes, mediaReplyHint].filter(
+    Boolean,
+  );
+  let commandBody = commandNotes.length
+    ? [commandNotes.join("\n"), prefixedBody ?? ""]
         .filter(Boolean)
         .join("\n")
         .trim()
@@ -1152,8 +1286,8 @@ export async function getReplyFromConfig(
         .filter(Boolean)
         .join("\n\n")
     : baseBodyFinal;
-  const queuedBody = mediaNote
-    ? [mediaNote, mediaReplyHint, queueBodyBase]
+  const queuedBody = commandNotes.length
+    ? [commandNotes.join("\n"), queueBodyBase]
         .filter(Boolean)
         .join("\n")
         .trim()
@@ -1322,6 +1456,11 @@ export async function getReplyFromConfig(
         { text: `🧭 New session: ${sessionIdFinal}` },
         ...payloadArray,
       ];
+    }
+
+    if (visionSummary && ctx.MediaType?.startsWith("image/") && ctx.MediaPath) {
+      const summaryLine = buildVisionSummaryLine(visionSummary);
+      finalPayloads = injectVisionSummary(finalPayloads, summaryLine);
     }
 
     return finalPayloads.length === 1 ? finalPayloads[0] : finalPayloads;

@@ -111,6 +111,27 @@ describe("createTelegramBot", () => {
     expect(sendChatActionSpy).toHaveBeenCalledWith(42, "typing");
   });
 
+  it("uses upload_photo chat action for image messages", async () => {
+    onSpy.mockReset();
+    sendChatActionSpy.mockReset();
+
+    createTelegramBot({ token: "tok" });
+    const handler = onSpy.mock.calls[0][1] as (
+      ctx: Record<string, unknown>,
+    ) => Promise<void>;
+    await handler({
+      message: {
+        chat: { id: 55, type: "private" },
+        caption: "see this",
+        photo: [{}],
+      },
+      me: { username: "clawdis_bot" },
+      getFile: async () => ({ download: async () => new Uint8Array() }),
+    });
+
+    expect(sendChatActionSpy).toHaveBeenCalledWith(55, "upload_photo");
+  });
+
   it("includes reply-to context when a Telegram reply is received", async () => {
     onSpy.mockReset();
     sendMessageSpy.mockReset();
