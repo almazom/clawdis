@@ -6,6 +6,7 @@
 - Remaining: 0
 - Progress: 100%
 - Last updated: 2026-01-01
+- Status: ✅ IMPLEMENTED
 
 ## Scope
 - Integrate image input using `/home/almaz/TOOLS/get_via_gemini_vision/gemini_vision.sh`
