@@ -39,6 +39,7 @@ import { loadWebMedia } from "../web/media.js";
 import { startLivenessProbe, type LivenessProbeOptions } from "./liveness-probe.js";
 import { messages as webSearchMessages } from "../web-search/messages.js";
 import { executeWebSearch } from "../web-search/executor.js";
+import { executeMultiAgentWebSearch, formatTelegramWithAgent } from "../web-search/multi-agent.js";
 import {
   createTTSButton,
   createTTSProgressButton,
@@ -651,11 +652,7 @@ async function runWebSearch(
 ): Promise<void> {
   // Check if already searching for this chat
   if (webSearchInFlight.has(chatId)) {
-    await ctx.reply(
-      webSearchMessages.error(
-        "Поиск уже выполняется для этого чата. Пожалуйста, подождите.",
-      ),
-    );
+    await ctx.reply("🔍 Поиск уже выполняется для этого чата. Пожалуйста, подождите.");
     return;
   }
 
@@ -666,17 +663,15 @@ async function runWebSearch(
   let statusMessageId: number | undefined = statusMessage?.messageId;
 
   try {
-    // Send acknowledgment and store message ID for editing
+    // Send initial status message
     if (statusChatId && statusMessageId) {
       await editTelegramMessage(
         ctx.api,
         { chatId: statusChatId, messageId: statusMessageId },
-        webSearchMessages.acknowledgment(),
+        "🥊 Запускаю AI бой...",
       );
     } else {
-      const sent = await ctx.reply(webSearchMessages.acknowledgment(), {
-        parse_mode: "MarkdownV2",
-      });
+      const sent = await ctx.reply("🥊 Запускаю AI бой...");
       statusChatId = ctx.chat?.id;
       statusMessageId = sent.message_id;
     }
@@ -685,56 +680,57 @@ async function runWebSearch(
       throw new Error("Failed to get message ID for status update");
     }
 
-    // Execute search with 90s timeout for deep research
-    const result = await executeWebSearch(query, { timeoutMs: 90000 });
+    // Execute multi-agent search
+    const result = await executeMultiAgentWebSearch(query, (status) => {
+      logVerbose(`[MULTI-AGENT] ${status}`);
+    });
 
-    if (result.success && result.result) {
-      // Edit the original message with result
-      const resultText = webSearchMessages.resultDelivery(result.result);
-
-      // Add TTS button if enabled
-      let replyMarkup = undefined;
-      if (isTTSEnabled()) {
-        try {
-          replyMarkup = createTTSButton(result.result.response);
-        } catch (err) {
-          console.warn(`[tts] Failed to create button: ${err}`);
-        }
-      }
-
+    if (result.winner) {
+      // Format and send first success response
+      const message = formatTelegramWithAgent(result);
       await ctx.api.editMessageText(
         statusChatId,
         statusMessageId,
-        resultText,
-        { parse_mode: "MarkdownV2", reply_markup: replyMarkup },
+        message,
+        { parse_mode: "MarkdownV2" }
       );
+
+      // Send HTML report via publish_me after all complete
+      if (result.htmlReport) {
+        // Give user time to read first response, then send report
+        setTimeout(async () => {
+          try {
+            await ctx.reply(`/publish_me ${result.htmlReport}`);
+          } catch (error) {
+            logger.error({ chatId, error }, "Failed to send HTML report");
+          }
+        }, 1000);
+      }
     } else {
-      // Edit with error - plain text, no markdown
+      // All agents failed
+      const errorDetails = result.agents
+        .filter(a => !a.success)
+        .map(a => `${a.agentDisplay}: ${a.error}`)
+        .join('\n');
+
+      const errorMessage = `❌ Все AI агенты не ответили.\n\nВозможные причины:\n- Проверьте API ключи в .env\n- Проверьте подключение к интернету\n\n${errorDetails}`;
+
       await ctx.api.editMessageText(
         statusChatId,
         statusMessageId,
-        webSearchMessages.error(result.error || "Unknown error", result.runId),
+        errorMessage,
       );
     }
   } catch (error) {
     logger.error({ chatId, error }, "Web search execution failed");
-    // If we have a status message, try to edit it
+
+    const errorText = error instanceof Error ? error.message : String(error);
+    const errorMessage = `❌ Ошибка поиска:\n\n${errorText}\n\nПопробуйте позже или проверьте настройки.`;
+
     if (statusChatId && statusMessageId) {
-      // Plain text for errors - no markdown needed
-      await ctx.api.editMessageText(
-        statusChatId,
-        statusMessageId,
-        webSearchMessages.error(
-          error instanceof Error ? error.message : String(error),
-        ),
-      );
+      await ctx.api.editMessageText(statusChatId, statusMessageId, errorMessage);
     } else {
-      // No status message to edit, send new message - plain text
-      await ctx.reply(
-        webSearchMessages.error(
-          error instanceof Error ? error.message : String(error),
-        ),
-      );
+      await ctx.reply(errorMessage);
     }
   } finally {
     // Always remove from in-flight set

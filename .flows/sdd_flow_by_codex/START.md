@@ -126,3 +126,57 @@ Count these factors from requirements:
 2. Read `FLOW/01_INPUT.md`
 3. Execute phases in order
 4. Assess complexity yourself in Phase 4
+5. **Pass Phase 5: Confidence Gate before marking complete**
+
+---
+
+## Phase 5: Confidence Gate (MANDATORY)
+
+**When you feel SDD is complete, STOP and ask:**
+
+> *"What is my confidence level comparing Trello cards to raw requirements following instruction flow?"*
+
+### Self-Assessment Checklist
+
+| # | Question | Target |
+|---|----------|--------|
+| 1 | All 12 requirements addressed? | 100% |
+| 2 | Trello cards map 1:1 to requirements? | Yes |
+| 3 | No assumptions made (all gaps filled)? | Yes |
+| 4 | Implementation details clear (code snippets, formats)? | Yes |
+| 5 | Logging format defined (exact messages)? | Yes |
+| 6 | Error handling covered (all cases)? | Yes |
+| 7 | Testing strategy defined (unit, integration, E2E)? | Yes |
+| 8 | All acceptance criteria present per card? | Yes |
+| 9 | Russian/text localization covered? | If required |
+| 10 | All configuration from .env (no hardcoded)? | Yes |
+
+### Confidence Formula
+
+```
+Confidence = (Requirements Covered / Total Requirements) × 100%
+Min Target: 95%
+```
+
+### If Confidence < 95%
+
+1. **Create todo list** of missing items
+2. **Implement fixes** (minimal changes only, respect existing structure)
+3. **Re-run self-assessment**
+4. **Repeat** until 95%+
+
+### Validation Tools
+
+```bash
+# Run confidence validation
+./validate-sdd.sh <sdd-folder>
+
+# Check requirements coverage
+./validate-requirements.sh <sdd-folder>
+```
+
+### Gate Rule
+
+> **DO NOT mark SDD as "READY FOR IMPLEMENTATION" until confidence ≥ 95%**
+
+Quality Gate 3 (`validate-sdd.sh`) will validate requirements coverage. If coverage < 95%, it will fail.

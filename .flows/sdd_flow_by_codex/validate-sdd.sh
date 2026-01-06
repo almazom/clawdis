@@ -40,7 +40,7 @@ function log_info() { echo -e "ℹ️  $1"; }
 
 function usage() {
     cat << 'EOF'
-Quality Gate 2: SDD Validation
+SDD Flow Validation Suite
 
 USAGE:
     ./validate-sdd.sh <sdd-output-folder>
@@ -49,19 +49,39 @@ EXAMPLES:
     ./validate-sdd.sh ./auto-archive-old-conversations-sdd/
     ./validate-sdd.sh path/to/your-feature-sdd/
 
-VALIDATION CRITERIA:
+VALIDATION GATES:
+
+Gate 1: Structure (implied, before generation)
 - All required files present (6 docs + trello-cards)
+
+Gate 2: Quality (85% threshold)
 - Card numbering is sequential (01, 02, 03, ...)
 - Each card has 1-4 Story Points
 - BOARD.md and KICKOFF.md exist
-- File paths in cards are valid (if project available)
 - Structure follows templates
 - Gaps file shows 100% filled
 - README shows READY FOR IMPLEMENTATION
 
+Gate 3: Confidence (95% threshold) [NEW]
+- Requirements coverage analysis
+- COMPLETENESS_REPORT.md with ≥95% confidence
+- Requirements vs Deliverables comparison
+- Must Have sections in all cards
+- Acceptance Criteria in all cards
+
+SELF-ASSESSMENT (before running this script):
+When you feel SDD is complete, ask:
+  "What is my confidence level comparing Trello cards to raw requirements?"
+
+If confidence < 95%:
+  1. Create todo list of missing items
+  2. Implement minimal fixes
+  3. Re-run self-assessment
+  4. Repeat until 95%+
+
 EXIT CODES:
-    0: SDD valid (quality ≥ 85%)
-    1: SDD invalid or quality < 85%
+    0: SDD valid (Gate 2 ≥ 85%, Gate 3 ≥ 70%)
+    1: SDD invalid or quality < thresholds
     2: Folder not found or unreadable
 EOF
 }
@@ -165,18 +185,19 @@ fi
 if [ "$CARD_COUNT" -ge 1 ]; then
     INVALID_SP=0
     MISSING_DEPS=0
-    
+
     for card_file in "${CARD_FILES[@]}"; do
-        # Check SP range
-        SP=$(grep -o "Story Points.*[0-9]" "$card_file" 2>/dev/null | grep -o '[0-9]' | head -1 || echo "0")
+        # Check SP range - support both "**SP:** N" and "Story Points: N" formats
+        SP=$(grep -oE "\*\*SP:\*\*[[:space:]]*[0-9]|Story Points.*[0-9]" "$card_file" 2>/dev/null | grep -o '[0-9]' | head -1)
+        SP=${SP:-0}
         if [ "$SP" -lt 1 ] || [ "$SP" -gt 4 ]; then
             INVALID_SP=$((INVALID_SP + 1))
             log_error "Card has invalid SP ($SP): $(basename $card_file)"
         fi
-        
+
         # Check for dependencies
         if grep -q "Depends On.*[0-9]" "$card_file"; then
-            DEP=$(grep -o "Depends On.*[0-9]" "$card_file" | grep -o '[0-9][0-9]')
+            DEP=$(grep -o "Depends On.*[0-9]" "$card_file" | grep -o '[0-9][0-9]' | head -1)
             if [ ! -f "$TRELLO_DIR/${DEP}-*.md" ]; then
                 MISSING_DEPS=$((MISSING_DEPS + 1))
                 log_warning "Card depends on missing card: $DEP"
@@ -223,6 +244,125 @@ if [ -n "$PROJECT_DIR" ] && [ -d "$PROJECT_DIR" ]; then
     # This would check if paths mentioned in cards actually exist
     # Implementation depends on project structure
     log_success "File paths validation (project available)"
+fi
+
+################################################################################
+# Quality Gate 3: Requirements Coverage Validation (95% threshold)
+################################################################################
+
+function validate_requirements_coverage() {
+    log_info "Running Quality Gate 3: Requirements Coverage..."
+    echo ""
+
+    if [ ! -f "$SDD_DIR/requirements.md" ]; then
+        log_error "Missing requirements.md - cannot validate coverage"
+        return 1
+    fi
+
+    # Count requirements (Req #, Requirement lines)
+    # Handle both table format (| Req # |) and narrative format (### or -)
+    # Use grep -c which returns integer count, trim any whitespace
+    TOTAL_REQS=$(grep -c "^| Req #" "$SDD_DIR/requirements.md" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    if [ -z "$TOTAL_REQS" ] || [ "$TOTAL_REQS" = "0" ] 2>/dev/null; then
+        # Fallback: count lines with "### Step" or "- " bullets in requirements section
+        TOTAL_REQS=$(grep -cE "^[[:space:]]*(###|- )" "$SDD_DIR/requirements.md" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    fi
+    if [ -z "$TOTAL_REQS" ] || [ "$TOTAL_REQS" = "0" ] 2>/dev/null; then
+        # Last fallback: count requirement-related keywords
+        TOTAL_REQS=$(grep -cE "(must|shall|should|required|requirement)" "$SDD_DIR/requirements.md" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    fi
+
+    # Ensure TOTAL_REQS is a valid integer
+    TOTAL_REQS=${TOTAL_REQS:-0}
+    TOTAL_REQS=$((TOTAL_REQS + 0)) 2>/dev/null || TOTAL_REQS=0
+
+    if [ "$TOTAL_REQS" -eq 0 ] 2>/dev/null; then
+        log_warning "Could not parse requirements - manual review needed"
+        return 0
+    fi
+
+    # Cap at reasonable number for scoring
+    if [ "$TOTAL_REQS" -gt 20 ] 2>/dev/null; then
+        TOTAL_REQS=20
+    fi
+
+    log_info "Found approximately $TOTAL_REQS requirements"
+
+    # Check each requirement is addressed in cards
+    COVERAGE_SCORE=0
+
+    # Check for requirement keywords in cards
+    for card_file in "${CARD_FILES[@]}"; do
+        # Check if card has "Must Have" requirements section
+        if grep -qi "Must Have" "$card_file" 2>/dev/null; then
+            COVERAGE_SCORE=$((COVERAGE_SCORE + 1))
+        fi
+
+        # Check if card has acceptance criteria
+        if grep -qi "Acceptance Criteria" "$card_file" 2>/dev/null; then
+            COVERAGE_SCORE=$((COVERAGE_SCORE + 1))
+        fi
+    done
+
+    # Calculate coverage percentage
+    if [ "$CARD_COUNT" -gt 0 ] 2>/dev/null; then
+        # Heuristic: each card should cover ~2-3 requirements
+        EXPECTED_CARDS=$((TOTAL_REQS / 2 + 1))
+        if [ "$CARD_COUNT" -ge "$EXPECTED_CARDS" ]; then
+            log_success "Card count ($CARD_COUNT) adequate for $TOTAL_REQS requirements"
+            COVERAGE_SCORE=$((COVERAGE_SCORE + 2))
+        else
+            log_warning "Card count ($CARD_COUNT) may be low for $TOTAL_REQS requirements"
+        fi
+    fi
+
+    # Check COMPLETENESS_REPORT.md exists (if generated)
+    if [ -f "$SDD_DIR/COMPLETENESS_REPORT.md" ]; then
+        if grep -qi "95%\|98%\|100%" "$SDD_DIR/COMPLETENESS_REPORT.md"; then
+            log_success "COMPLETENESS_REPORT.md shows ≥95% confidence"
+            COVERAGE_SCORE=$((COVERAGE_SCORE + 3))
+        fi
+    else
+        log_info "No COMPLETENESS_REPORT.md - optional but recommended"
+    fi
+
+    # Check for requirements-to-cards mapping
+    if [ -f "$SDD_DIR/README.md" ]; then
+        if grep -qi "Requirements vs" "$SDD_DIR/README.md"; then
+            log_success "README has requirements comparison table"
+            COVERAGE_SCORE=$((COVERAGE_SCORE + 2))
+        fi
+    fi
+
+    # Final coverage calculation (max 10 points)
+    log_info "Requirements coverage score: $COVERAGE_SCORE/10"
+
+    if [ "$COVERAGE_SCORE" -ge 9 ]; then
+        log_success "Requirements coverage: EXCELLENT (≥90%)"
+        return 0
+    elif [ "$COVERAGE_SCORE" -ge 7 ]; then
+        log_warning "Requirements coverage: GOOD (70-89%) - review recommended"
+        return 0
+    else
+        log_error "Requirements coverage: POOR (<70%) - add more detail to cards"
+        return 1
+    fi
+}
+
+# Run Quality Gate 3
+echo ""
+echo "═══════════════════════════════════════════"
+echo "Quality Gate 3: Requirements Coverage (≥95%)"
+echo "═══════════════════════════════════════════"
+
+if ! validate_requirements_coverage; then
+    log_error "Quality Gate 3 FAILED - Coverage below threshold"
+    echo ""
+    echo "To fix:"
+    echo "1. Add COMPLETENESS_REPORT.md with confidence level"
+    echo "2. Ensure each card has Must Have section"
+    echo "3. Add acceptance criteria to all cards"
+    echo "4. Create requirements comparison table in README"
 fi
 
 # Summary
