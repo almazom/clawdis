@@ -3,7 +3,8 @@
 # Usage: kimi_cli_web "your query"
 
 # Load environment from project root
-cd "$(dirname "$0")/../.." && source .env && cd - > /dev/null
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "$SCRIPT_DIR/../../.env"
 
 QUERY="$1"
 TIMEOUT="${2:-${WEB_SEARCH_TIMEOUT_SECONDS:-90}}"

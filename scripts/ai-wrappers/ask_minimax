@@ -1,13 +1,13 @@
 #!/bin/bash
-# minimax_cli_web - MiniMax Claude web search wrapper
-# Usage: minimax_cli_web "your query"
+# ask_minimax - General purpose MiniMax Claude query wrapper
+# Usage: ask_minimax "your question"
 
 # Load environment from project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$SCRIPT_DIR/../../.env"
 
 QUERY="$1"
-TIMEOUT="${2:-${WEB_SEARCH_TIMEOUT_SECONDS:-120}}"
+TIMEOUT="${2:-120}"
 
 if [ -z "$QUERY" ]; then
   echo '{"error": "No query provided"}'
@@ -27,5 +27,5 @@ if [ -z "$ANTHROPIC_AUTH_TOKEN" ]; then
   exit 1
 fi
 
-claude -p "use builtin tools, web_search, web_fetch, for looking for: $QUERY [ANSWER in Russian]" \
+claude -p "$QUERY" \
   --dangerously-skip-permissions --output-format json 2>&1
