@@ -709,28 +709,27 @@ async function runWebSearch(
         { parse_mode: "MarkdownV2", reply_markup: replyMarkup },
       );
     } else {
-      // Edit with error
+      // Edit with error - plain text, no markdown
       await ctx.api.editMessageText(
         statusChatId,
         statusMessageId,
         webSearchMessages.error(result.error || "Unknown error", result.runId),
-        { parse_mode: "MarkdownV2" },
       );
     }
   } catch (error) {
     logger.error({ chatId, error }, "Web search execution failed");
     // If we have a status message, try to edit it
     if (statusChatId && statusMessageId) {
+      // Plain text for errors - no markdown needed
       await ctx.api.editMessageText(
         statusChatId,
         statusMessageId,
         webSearchMessages.error(
           error instanceof Error ? error.message : String(error),
         ),
-        { parse_mode: "MarkdownV2" },
       );
     } else {
-      // No status message to edit, send new message
+      // No status message to edit, send new message - plain text
       await ctx.reply(
         webSearchMessages.error(
           error instanceof Error ? error.message : String(error),
