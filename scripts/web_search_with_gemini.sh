@@ -7,10 +7,10 @@ export PATH="/home/almaz/.local/share/fnm/node-versions/v22.21.1/installation/bi
 set -e  # Exit on error
 set -o pipefail  # Catch errors in pipelines
 
-# Default values
-MODEL="gemini-3-flash-preview"
+# Default values - timeout comes from environment or use fallback
+MODEL="${WEB_SEARCH_GEMINI_MODEL:-gemini-3-flash-preview}"
 OUTPUT_FORMAT="json"
-SCRIPT_TIMEOUT=90  # Script-level timeout as safety net
+SCRIPT_TIMEOUT="${WEB_SEARCH_TIMEOUT_SECONDS:-180}"  # Script-level timeout as safety net (default: 180s = 3min)
 
 # Debug logging (only if DEBUG env var is set)
 [ -n "$DEBUG" ] && echo "[DEBUG] Script started with query" >&2
@@ -57,6 +57,15 @@ if [ -z "$QUERY" ]; then
   exit 1
 fi
 
+# Timeout check - ensure shell timeout matches TypeScript timeout
+# TypeScript uses WEB_SEARCH_TIMEOUT_MS (milliseconds)
+# Shell uses WEB_SEARCH_TIMEOUT_SECONDS (seconds)
+SHELL_TIMEOUT="${WEB_SEARCH_TIMEOUT_SECONDS:-180}"
+TYPE_TIMEOUT_MS="${WEB_SEARCH_TIMEOUT_MS:-180000}"
+if [ "$SHELL_TIMEOUT" -gt "$((TYPE_TIMEOUT_MS / 1000 * 2))" ] 2>/dev/null; then
+  echo "[WARN] Shell timeout ($SHELL_TIMEOUT s) significantly exceeds TypeScript timeout (${TYPE_TIMEOUT_MS} ms)" >&2
+fi
+
 # Load the specialized prompt tail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -79,12 +88,12 @@ FULL_PROMPT="$QUERY $TAIL"
 # Execute gemini CLI using positional argument (one-shot mode)
 # IMPORTANT: Use positional args, not -p to avoid interactive mode
 # Use timeout to prevent hanging
-timeout $SCRIPT_TIMEOUT gemini "$FULL_PROMPT" -m "$MODEL" --output-format "$OUTPUT_FORMAT" 2>&1
+timeout $SHELL_TIMEOUT gemini "$FULL_PROMPT" -m "$MODEL" --output-format "$OUTPUT_FORMAT" 2>&1
 EXIT_CODE=$?
 
 # Handle timeout and errors
 if [ $EXIT_CODE -eq 124 ]; then
-  echo "Error: Search timed out after ${SCRIPT_TIMEOUT} seconds" >&2
+  echo "Error: Search timed out after ${SHELL_TIMEOUT} seconds" >&2
   exit 124
 elif [ $EXIT_CODE -ne 0 ]; then
   echo "Error: gemini CLI failed with exit code $EXIT_CODE" >&2
