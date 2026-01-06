@@ -1,0 +1,17 @@
+#!/bin/bash
+# qwen_cli_web - Qwen CLI web search wrapper
+# Usage: qwen_cli_web "your query"
+
+# Load environment from project root
+cd "$(dirname "$0")/../.." && source .env && cd - > /dev/null
+
+QUERY="$1"
+TIMEOUT="${2:-${WEB_SEARCH_TIMEOUT_SECONDS:-90}}"
+
+if [ -z "$QUERY" ]; then
+  echo '{"error": "No query provided"}'
+  exit 1
+fi
+
+QWEN_MODEL="${QWEN_MODEL:-qwen-plus}"
+NODE_NO_WARNINGS=1 timeout "$TIMEOUT" qwen -p "$QUERY [ANSWER. strictly in russian language]" -y 2>&1

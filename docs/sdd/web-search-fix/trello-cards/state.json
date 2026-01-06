@@ -1,9 +1,9 @@
 {
   "bug_id": "WEB-SEARCH-INTERMITTENT",
-  "overall_status": "IN_PROGRESS",
-  "tdd_phase": "VERIFY",
+  "overall_status": "COMPLETE",
+  "tdd_phase": "COMPLETE",
   "started_at": "2026-01-06T00:00:00Z",
-  "completed_at": null,
+  "completed_at": "2026-01-06T10:00:00Z",
   "current_card": "03",
   "cards": {
     "01": {
@@ -25,12 +25,12 @@
       "error": null
     },
     "03": {
-      "status": "pending",
+      "status": "completed",
       "title": "Verify & PR",
       "tdd_phase": "VERIFY",
-      "started_at": null,
-      "completed_at": null,
-      "pr_url": null,
+      "started_at": "2026-01-06T09:57:00Z",
+      "completed_at": "2026-01-06T10:00:00Z",
+      "pr_url": "https://github.com/clawdbot/clawdbot/pull/279",
       "error": null
     }
   },
@@ -69,6 +69,20 @@
       "message": "Card 02 completed - Fix applied, test passes",
       "card": "02",
       "tdd_phase": "GREEN"
+    },
+    {
+      "timestamp": "2026-01-06T09:57:00Z",
+      "level": "INFO",
+      "message": "Card 03 started - Verify and create PR",
+      "card": "03",
+      "tdd_phase": "VERIFY"
+    },
+    {
+      "timestamp": "2026-01-06T10:00:00Z",
+      "level": "INFO",
+      "message": "Card 03 completed - PR created, all cards done",
+      "card": "03",
+      "tdd_phase": "VERIFY"
     }
   ]
 }

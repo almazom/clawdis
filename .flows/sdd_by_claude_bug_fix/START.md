@@ -1,6 +1,23 @@
-# SDD Bug Fix Flow - AI Agent Entry Point
+# SDD Bug Fix Flow - Planning Phase
 
-> Read this file and execute the phases below to fix bugs systematically.
+> 📋 **PLANNING DOCUMENT**: This helps you plan bug fixes. For execution, see generated `00_EXECUTE_HERE.md`.
+
+## ⚡ Quick Start (30 seconds)
+
+```bash
+# 1. Verify setup
+./verify-prereqs.sh
+
+# 2. Get bug report from user
+#    Required: summary, steps, error, severity
+
+# 3. Generate bug fix package
+./generate-bug-fix.sh --bug-report bug-report.md --validate
+
+# 4. Start execution
+cd docs/sdd/bug-fix-$(date +%Y-%m-%d)-001/trello-cards
+cat 00_EXECUTE_HERE.md
+```
 
 ## Core Principle
 
@@ -19,84 +36,74 @@
 
 Transform bug reports into verified fixes with regression tests and executable Trello cards.
 
-## Execution Protocol
+## 📋 What This Flow Does
 
+**5 Planning Phases → 3 Execution Cards**
+
+### Planning (You are here)
+1. **Bug Report** - Collect structured details
+2. **Reproduction** - Create ARC script (must be >70% reproducible)
+3. **Root Cause** - Find exact location (file:line, ≥90% confidence)
+4. **Fix Strategy** - Plan minimal fix + regression test
+5. **Output** - Generate executable cards
+
+### Execution (Generated Package)
+1. **RED** - Write failing test
+2. **GREEN** - Implement fix (minimal change)
+3. **VERIFY** - Full test suite + create PR
+
+### Planning Phase Details
+
+### Phase 2: Reproduction (FLOW/02_REPRODUCE.md)
+**⚠️ CRITICAL: Do NOT proceed without verified reproduction**
+
+- Follow steps exactly
+- Create ARC script (automated reproduction)
+- Verify >70% reproduction rate
+- Document environment sensitivity
+
+### Phase 3: Root Cause Analysis (FLOW/03_ROOT_CAUSE.md)  
+**⚠️ CRITICAL: Do NOT proceed without identified root cause**
+
+- Layer-by-layer investigation
+- Find exact location: `file.ts:line`
+- Achieve ≥90% confidence
+- Document evidence
+
+### Phase 4: Fix Strategy (FLOW/04_FIX_STRATEGY.md)
+
+- Plan minimal fix approach
+- Design regression test (TDD RED)
+- Identify affected areas
+- Define verification criteria
+
+### Phase 5: Output (FLOW/05_OUTPUT.md)
+
+**Generate package via:**
+```bash
+./generate-bug-fix.sh --bug-report bug-report.md --validate
 ```
-PHASE 1 → PHASE 2 → PHASE 3 → PHASE 4 → PHASE 5
-   │         │         │         │         │
-BUG_REPORT REPRODUCE ROOT_CAUSE FIX_PLAN  OUTPUT
-```
 
-### Phase 1: Bug Report
-**Read:** `FLOW/01_BUG_REPORT.md`
-
-1. Get bug report from user
-2. Validate all mandatory fields present
-3. Document in `bug-report.md`
-
-**Mandatory Fields:**
-- Summary (one line)
-- Expected vs Actual behavior
-- Reproduction steps (numbered)
-- Error output (exact)
-- Severity (P0-P3)
-
-### Phase 2: Reproduction
-**Read:** `FLOW/02_REPRODUCE.md`
-
-1. Follow reproduction steps exactly
-2. Verify bug occurs
-3. Create automated reproduction script (ARC)
-4. Document reproduction rate
-
-**DO NOT PROCEED without verified reproduction!**
-
-### Phase 3: Root Cause Analysis
-**Read:** `FLOW/03_ROOT_CAUSE.md`
-
-1. Apply layer-by-layer investigation
-2. Analyze logs and stack traces
-3. Identify exact location (file:line)
-4. Achieve ≥90% confidence
-
-**DO NOT PROCEED without identified root cause!**
-
-### Phase 4: Fix Strategy
-**Read:** `FLOW/04_FIX_STRATEGY.md`
-
-1. Define fix approach
-2. Plan regression test (TDD RED)
-3. Identify affected areas
-4. Define verification criteria
-
-### Phase 5: Output
-**Read:** `FLOW/05_OUTPUT.md`
-
-Generate bug fix package in `docs/sdd/`:
+**Package structure:**
 ```
 docs/sdd/<bug-id>/
-├── KICKOFF.md                    # ⭐ ENTRY POINT - Agent starts here
-├── README.md
+├── 00_EXECUTE_HERE.md        # ⭐ ENTRY POINT for agent
 ├── bug-report.md
 ├── reproduction-case.md
 ├── root-cause-analysis.md
 ├── fix-strategy.md
 └── trello-cards/
-    ├── KICKOFF.md                # Copy of root KICKOFF.md
     ├── BOARD.md
     ├── state.json
-    ├── smart_commit.sh           # Git flow tool
-    ├── auto-commit-daemon.sh     # Git flow tool
-    ├── AGENT_PROTOCOL.md         # State update patterns
-    ├── 01-regression-test.md     # TDD RED
-    ├── 02-implement-fix.md       # TDD GREEN
-    └── 03-verify-fix.md          # Verification + PR
+    ├── smart_commit.sh       # Copied locally
+    ├── auto-commit-daemon.sh # Copied locally
+    ├── AGENT_PROTOCOL.md
+    ├── 01-regression-test.md
+    ├── 02-implement-fix.md
+    └── 03-verify-fix.md
 ```
 
-**KICKOFF.md Requirements:**
-- ⭐ Must be in ROOT of SDD package (entry point for agent)
-- Must contain: Bug summary, Git Flow Enforcement, TDD Protocol, Getting Started
-- Must link to: `trello-cards/BOARD.md`, `trello-cards/state.json`, first card
+**✅ After generation, agent starts at: `00_EXECUTE_HERE.md` in the package directory**
 
 ## Card Count (Agent Decides)
 
@@ -143,9 +150,37 @@ Bug fixes are focused. Calculate based on:
 5. **Max 7 cards** - Bug fixes are focused
 6. **Evidence based** - All conclusions need proof
 
-## Start Now
+## 🚀 Start Planning
 
-1. Ask user for bug report
-2. Read `FLOW/01_BUG_REPORT.md`
-3. Execute phases in order
-4. Generate fix package
+```bash
+# Step 0: Verify your environment (10 seconds)
+./verify-prereqs.sh
+
+# Step 1: Get bug report from user
+#    Save as: bug-report.md
+#    Required fields:
+#    - Summary (one line)
+#    - Expected vs Actual
+#    - Numbered reproduction steps
+#    - Exact error output
+#    - Severity (P0-P3)
+
+# Step 2: Execute planning phases
+#    - Read FLOW/01_BUG_REPORT.md
+#    - Read FLOW/02_REPRODUCE.md
+#    - Read FLOW/03_ROOT_CAUSE.md
+#    - Read FLOW/04_FIX_STRATEGY.md
+
+# Step 3: Generate execution package
+./generate-bug-fix.sh --bug-report bug-report.md --validate
+
+# Step 4: Begin execution
+cd docs/sdd/bug-fix-*/trello-cards
+cat 00_EXECUTE_HERE.md
+```
+
+## 💡 Next Steps After Planning
+
+Once you generate the package, the **execution phase** begins. All execution instructions are in the generated `00_EXECUTE_HERE.md` file.
+
+**Need help?** Run `./check-status.sh` from the flow root directory.

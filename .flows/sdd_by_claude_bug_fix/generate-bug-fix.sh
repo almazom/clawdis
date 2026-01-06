@@ -66,9 +66,12 @@ OUTPUT:
     ├── fix-strategy.md
     ├── fix-verification.md
     └── trello-cards/
-        ├── KICKOFF.md
+        ├── 00_EXECUTE_HERE.md       # ⭐ ENTRY POINT
         ├── BOARD.md
         ├── state.json
+        ├── smart_commit.sh           # Copied locally
+        ├── auto-commit-daemon.sh     # Copied locally
+        ├── AGENT_PROTOCOL.md
         ├── 01-regression-test.md
         ├── 02-implement-fix.md
         └── 03-verify-fix.md
@@ -208,12 +211,16 @@ main() {
         echo "  - $OUTPUT_DIR/root-cause-analysis.md"
         echo "  - $OUTPUT_DIR/fix-strategy.md"
         echo "  - $OUTPUT_DIR/fix-verification.md"
-        echo "  - $OUTPUT_DIR/trello-cards/KICKOFF.md"
+        echo "  - $OUTPUT_DIR/trello-cards/00_EXECUTE_HERE.md"
         echo "  - $OUTPUT_DIR/trello-cards/BOARD.md"
         echo "  - $OUTPUT_DIR/trello-cards/state.json"
         echo "  - $OUTPUT_DIR/trello-cards/01-regression-test.md"
         echo "  - $OUTPUT_DIR/trello-cards/02-implement-fix.md"
         echo "  - $OUTPUT_DIR/trello-cards/03-verify-fix.md"
+        echo "  - $OUTPUT_DIR/trello-cards/smart_commit.sh"
+        echo "  - $OUTPUT_DIR/trello-cards/auto-commit-daemon.sh"
+        echo "  - $OUTPUT_DIR/trello-cards/update-state.sh"
+        echo "  - $OUTPUT_DIR/trello-cards/AGENT_PROTOCOL.md"
         echo ""
         log_success "Dry run complete"
         exit 0
@@ -284,6 +291,39 @@ main() {
 
     log_success "Templates processed"
 
+    # Copy scripts to package (for local execution)
+    log_info "Copying scripts to package..."
+    if [ -f "$SCRIPT_DIR/smart_commit.sh" ]; then
+        cp "$SCRIPT_DIR/smart_commit.sh" "$OUTPUT_DIR/trello-cards/"
+        chmod +x "$OUTPUT_DIR/trello-cards/smart_commit.sh"
+        log_success "Copied smart_commit.sh"
+    else
+        log_warning "smart_commit.sh not found in flow root"
+    fi
+
+    if [ -f "$SCRIPT_DIR/auto-commit-daemon.sh" ]; then
+        cp "$SCRIPT_DIR/auto-commit-daemon.sh" "$OUTPUT_DIR/trello-cards/"
+        chmod +x "$OUTPUT_DIR/trello-cards/auto-commit-daemon.sh"
+        log_success "Copied auto-commit-daemon.sh"
+    else
+        log_warning "auto-commit-daemon.sh not found in flow root"
+    fi
+
+    if [ -f "$SCRIPT_DIR/update-state.sh" ]; then
+        cp "$SCRIPT_DIR/update-state.sh" "$OUTPUT_DIR/trello-cards/"
+        chmod +x "$OUTPUT_DIR/trello-cards/update-state.sh"
+        log_success "Copied update-state.sh"
+    else
+        log_warning "update-state.sh not found in flow root"
+    fi
+
+    if [ -f "$SCRIPT_DIR/AGENT_PROTOCOL.md" ]; then
+        cp "$SCRIPT_DIR/AGENT_PROTOCOL.md" "$OUTPUT_DIR/trello-cards/"
+        log_success "Copied AGENT_PROTOCOL.md"
+    else
+        log_warning "AGENT_PROTOCOL.md not found in flow root"
+    fi
+
     # Create metadata
     cat > "$OUTPUT_DIR/bug-fix-metadata.json" << EOF
 {
@@ -315,16 +355,24 @@ EOF
     echo ""
     echo -e "${BLUE}Output:${NC} $OUTPUT_DIR"
     echo ""
-    echo -e "${BLUE}Next Steps:${NC}"
-    echo "  1. cd $OUTPUT_DIR"
-    echo "  2. Review bug-report.md"
-    echo "  3. Create reproduction-case.md"
-    echo "  4. Complete root-cause-analysis.md"
-    echo "  5. Execute trello-cards/KICKOFF.md"
-    echo ""
-    echo -e "${GREEN}Quick Start:${NC}"
+    echo -e "${GREEN}🚀 EXECUTION STARTS HERE:${NC}"
     echo "  cd $OUTPUT_DIR/trello-cards"
-    echo "  cat KICKOFF.md"
+    echo "  cat 00_EXECUTE_HERE.md"
+    echo ""
+    echo -e "${BLUE}📋 Package Contents:${NC}"
+    echo "  - 00_EXECUTE_HERE.md     # ⭐ AGENT ENTRY POINT"
+    echo "  - smart_commit.sh         # Auto-commit tool"
+    echo "  - auto-commit-daemon.sh   # Background commits"
+    echo "  - 01-regression-test.md   # TDD RED"
+    echo "  - 02-implement-fix.md     # TDD GREEN"
+    echo "  - 03-verify-fix.md        # TDD VERIFY"
+    echo ""
+    echo -e "${BLUE}Next Steps:${NC}"
+    echo "  1. cd $OUTPUT_DIR/trello-cards"
+    echo "  2. Read 00_EXECUTE_HERE.md"
+    echo "  3. Start auto-commit daemon"
+    echo "  4. Execute cards 01 → 02 → 03"
+    echo "  5. Run create-pr.sh to create PR"
 }
 
 # Banner

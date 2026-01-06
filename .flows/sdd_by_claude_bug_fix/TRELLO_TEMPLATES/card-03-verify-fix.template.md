@@ -190,8 +190,12 @@ echo "============================================"
 ### Step 11: Update state.json
 
 ```bash
-# Mark all cards complete
-jq '.overall_status = "COMPLETE" | .cards."03".status = "completed" | .cards."03".completed_at = "'$(date -Iseconds)'" | .tdd_phase = "COMPLETE" | .completed_at = "'$(date -Iseconds)'" | .pr_url = "'$PR_URL'"' state.json > state.json.tmp && mv state.json.tmp state.json
+# Mark card 03 as completed (marks final card complete)
+./update-state.sh 03 completed
+
+# Add PR URL to state.json (manual step)
+PR_URL="https://github.com/owner/repo/pull/123"  # Replace with actual PR URL
+jq --arg url "$PR_URL" '.pr_url = $url | .overall_status = "COMPLETE"' state.json > state.json.tmp && mv state.json.tmp state.json
 
 cat state.json | jq '.overall_status, .pr_url'
 ```

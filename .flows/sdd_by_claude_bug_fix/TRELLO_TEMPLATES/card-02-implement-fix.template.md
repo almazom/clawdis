@@ -143,8 +143,8 @@ Fix: {FIX_DESCRIPTION}
 ### Step 9: Update state.json
 
 ```bash
-# Mark card 02 as completed
-jq '.cards."02".status = "completed" | .cards."02".completed_at = "'$(date -Iseconds)'" | .tdd_phase = "VERIFY" | .current_card = "03"' state.json > state.json.tmp && mv state.json.tmp state.json
+# Mark card 02 as completed (automatically advances to card 03)
+./update-state.sh 02 completed
 
 cat state.json | jq '.cards."02"'
 ```

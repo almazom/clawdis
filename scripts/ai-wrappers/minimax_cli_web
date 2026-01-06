@@ -1,0 +1,30 @@
+#!/bin/bash
+# minimax_cli_web - MiniMax Claude web search wrapper
+# Usage: minimax_cli_web "your query"
+
+# Load environment from project root
+cd "$(dirname "$0")/../.." && source .env && cd - > /dev/null
+
+QUERY="$1"
+TIMEOUT="${2:-${WEB_SEARCH_TIMEOUT_SECONDS:-120}}"
+
+if [ -z "$QUERY" ]; then
+  echo '{"error": "No query provided"}'
+  exit 1
+fi
+
+export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_MINIMAX_MODEL:-MiniMax-M2.1}"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_MINIMAX_MODEL:-MiniMax-M2.1}"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_MINIMAX_MODEL:-MiniMax-M2.1}"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_MINIMAX_MODEL:-MiniMax-M2.1}"
+export ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic
+export ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_MINIMAX_API_KEY:-}"
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+
+if [ -z "$ANTHROPIC_AUTH_TOKEN" ]; then
+  echo '{"error": "ANTHROPIC_MINIMAX_API_KEY not set"}'
+  exit 1
+fi
+
+claude -p "use builtin tools, web_search, web_fetch, for looking for: $QUERY [ANSWER in Russian]" \
+  --dangerously-skip-permissions --output-format json 2>&1

@@ -140,8 +140,8 @@ git commit -m "test: add failing regression test for {BUG_ID}
 ### Step 6: Update state.json
 
 ```bash
-# Mark card 01 as completed
-jq '.cards."01".status = "completed" | .cards."01".completed_at = "'$(date -Iseconds)'" | .tdd_phase = "GREEN" | .current_card = "02"' state.json > state.json.tmp && mv state.json.tmp state.json
+# Mark card 01 as completed (automatically advances to card 02)
+./update-state.sh 01 completed
 
 cat state.json | jq '.cards."01"'
 ```
