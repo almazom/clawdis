@@ -10,6 +10,9 @@ import { exec } from 'node:child_process';
 
 const execAsync = promisify(exec);
 
+// Import AI analysis
+import { analyzeWithAI, type AIAnalysis } from './ai-analysis.js';
+
 export interface AgentResult {
   agent: string;
   agentDisplay: string;  // e.g., "Gemini CLI", "Kimi CLI"
@@ -29,6 +32,7 @@ export interface MultiAgentResult {
   tips: string[];
   htmlReport: string;
   generatedAt: Date;
+  aiAnalysis?: AIAnalysis;
 }
 
 const AGENTS = [
@@ -66,8 +70,12 @@ export async function executeMultiAgentWebSearch(
   // Generate summary and insights
   const { summary, insights, tips } = analyzeResults(query, results, winner);
 
+  // Generate AI-powered analysis
+  onStatus?.('🤖 Generating AI analysis...');
+  const aiAnalysis = await analyzeWithAI(query, results);
+
   // Generate HTML report
-  const htmlReport = generateHtmlReport(query, results, summary, insights, tips, totalDuration, winner);
+  const htmlReport = generateHtmlReport(query, results, summary, insights, tips, totalDuration, winner, aiAnalysis);
 
   return {
     query,
@@ -78,6 +86,7 @@ export async function executeMultiAgentWebSearch(
     tips,
     htmlReport,
     generatedAt: new Date(),
+    aiAnalysis,
   };
 }
 
@@ -193,7 +202,8 @@ function generateHtmlReport(
   insights: string[],
   tips: string[],
   totalDuration: number,
-  winner?: AgentResult
+  winner?: AgentResult,
+  aiAnalysis?: AIAnalysis
 ): string {
   const successful = results.filter(r => r.success);
   const maxDuration = Math.max(...results.map(r => r.durationMs), 1);
@@ -321,6 +331,45 @@ function generateHtmlReport(
 
   <h2>📈 Итоги</h2>
   <div class="summary">${summary}</div>
+
+  ${aiAnalysis ? `
+  <h2>🤖 AI Анализ</h2>
+  <div class="ai-analysis" style="background: linear-gradient(135deg, #16213e, #0f3460); padding: 25px; border-radius: 10px; border-left: 5px solid #00d4ff; margin: 20px 0;">
+    <div style="margin-bottom: 20px;">
+      <h3 style="color: #ffd700; margin-bottom: 10px;">📋 Краткое резюме</h3>
+      <p style="line-height: 1.6;">${aiAnalysis.summary}</p>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+      <h3 style="color: #ffd700; margin-bottom: 10px;">📌 Общие выводы</h3>
+      <ul style="line-height: 1.6;">
+        ${aiAnalysis.consensus.map(c => `<li>${c}</li>`).join('')}
+      </ul>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+      <h3 style="color: #ffd700; margin-bottom: 10px;">💡 Уникальные особенности</h3>
+      <ul style="line-height: 1.6;">
+        ${aiAnalysis.insights.map(i => `<li>${i}</li>`).join('')}
+      </ul>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+      <h3 style="color: #ffd700; margin-bottom: 10px;">⚠️ Противоречия</h3>
+      <p style="line-height: 1.6;">${aiAnalysis.contradictions}</p>
+    </div>
+
+    <div style="margin-bottom: 20px; background: linear-gradient(135deg, #ffd700, #ff8c00); color: #000; padding: 15px; border-radius: 8px;">
+      <h3 style="color: #000; margin-bottom: 10px;">⭐ Лучший ответ: ${aiAnalysis.bestAgent}</h3>
+      <p style="color: #000; line-height: 1.6;"><strong>Обоснование:</strong> ${aiAnalysis.bestReason}</p>
+    </div>
+
+    <div>
+      <h3 style="color: #ffd700; margin-bottom: 10px;">🎯 Рекомендации</h3>
+      <p style="line-height: 1.6;">${aiAnalysis.recommendations}</p>
+    </div>
+  </div>
+  ` : '<div style="background: #16213e; padding: 20px; border-radius: 10px; border-left: 5px solid #ff6b6b; margin: 20px 0;"><h3 style="color: #ff6b6b;">⚠️ AI Анализ недоступен</h3><p style="color: #aaa;">Анализ не был сгенерирован (возможно, ошибка или таймаут)</p></div>'}
 
   <h2>💡 Инсайты</h2>
   <div class="insights">
