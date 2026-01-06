@@ -3,7 +3,7 @@
  * Uses telegram formatter for MarkdownV2 and emoji restrictions
  */
 
-import { formatTelegramMessage } from "../telegram/formatter.js";
+import { formatTelegramMessage, formatPlainText } from "../telegram/formatter.js";
 
 export interface WebSearchResult {
   response: string;
@@ -51,11 +51,12 @@ export const messages: WebSearchMessages = {
 
   /**
    * Error message with user-friendly text and search ID for debugging
+   * Uses formatPlainText for error text to escape special characters
    */
   error: (error: string, sessionId?: string) => {
     const errorText = error.length > 200 ? `${error.slice(0, 200)}...` : error;
     const sessionInfo = sessionId ? `\nSearch ID: ${sessionId}` : "";
-    const message = `❌ Ошибка поиска:\n\n${errorText}${sessionInfo}`;
+    const message = `❌ Ошибка поиска:\n\n${formatPlainText(errorText)}${sessionInfo}`;
     return formatTelegramMessage(message);
   },
 
@@ -68,9 +69,10 @@ export const messages: WebSearchMessages = {
 
   /**
    * CLI not found error with configuration hint
+   * Uses formatPlainText for path to escape special characters
    */
   cliNotFound: (path: string) => {
-    const message = `❌ Ошибка поиска:\n\nCLI not found at ${path}\nПроверьте настройки webSearch.cliPath в конфигурации`;
+    const message = `❌ Ошибка поиска:\n\nCLI not found at ${formatPlainText(path)}\nПроверьте настройки webSearch.cliPath в конфигурации`;
     return formatTelegramMessage(message);
   }
 };
