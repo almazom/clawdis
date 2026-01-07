@@ -406,6 +406,7 @@ export type ClawdisConfig = {
   session?: SessionConfig;
   web?: WebConfig;
   telegram?: TelegramConfig;
+  aiClub?: AiClubConfig;
   discord?: DiscordConfig;
   cron?: CronConfig;
   hooks?: HooksConfig;
@@ -697,10 +698,26 @@ const webSearchSchema = z
     requireConfirmation: z.boolean().default(WEB_SEARCH_DEFAULTS.requireConfirmation),
     geminiModel: z.string().default(WEB_SEARCH_DEFAULTS.geminiModel),
     customPatterns: z.array(z.string()).optional(),
+    wrapperDir: z.string().optional(),
+    webFetchScriptPath: z.string().optional(),
   })
   .optional();
 
 export type WebSearchConfig = z.infer<typeof webSearchSchema>;
+
+const AI_CLUB_DEFAULTS = {
+  cliPath: "ai_club",
+  timeoutMs: 300000,
+} as const;
+
+const aiClubSchema = z
+  .object({
+    cliPath: z.string().default(AI_CLUB_DEFAULTS.cliPath),
+    timeoutMs: z.number().int().positive().default(AI_CLUB_DEFAULTS.timeoutMs),
+  })
+  .optional();
+
+export type AiClubConfig = z.infer<typeof aiClubSchema>;
 
 // TTS configuration defaults
 const TTS_DEFAULTS = {
@@ -925,6 +942,7 @@ const ClawdisSchema = z.object({
     .optional(),
   deepResearch: deepResearchSchema,
   webSearch: webSearchSchema,
+  aiClub: aiClubSchema,
   tts: ttsSchema,
   gateway: z
     .object({
@@ -1038,8 +1056,10 @@ export function loadConfig(): ClawdisConfig {
     if (!fs.existsSync(configPath)) {
       return applyTelegramEnvOverrides(
         applyTTSEnvOverrides(
-          applyWebSearchEnvOverrides(
-            applyDeepResearchEnvOverrides(applyIdentityDefaults({})),
+          applyAiClubEnvOverrides(
+            applyWebSearchEnvOverrides(
+              applyDeepResearchEnvOverrides(applyIdentityDefaults({})),
+            ),
           ),
         ),
       );
@@ -1049,8 +1069,10 @@ export function loadConfig(): ClawdisConfig {
     if (typeof parsed !== "object" || parsed === null) {
       return applyTelegramEnvOverrides(
         applyTTSEnvOverrides(
-          applyWebSearchEnvOverrides(
-            applyDeepResearchEnvOverrides(applyIdentityDefaults({})),
+          applyAiClubEnvOverrides(
+            applyWebSearchEnvOverrides(
+              applyDeepResearchEnvOverrides(applyIdentityDefaults({})),
+            ),
           ),
         ),
       );
@@ -1063,17 +1085,21 @@ export function loadConfig(): ClawdisConfig {
       }
       return applyTelegramEnvOverrides(
         applyTTSEnvOverrides(
-          applyWebSearchEnvOverrides(
-            applyDeepResearchEnvOverrides(applyIdentityDefaults({})),
+          applyAiClubEnvOverrides(
+            applyWebSearchEnvOverrides(
+              applyDeepResearchEnvOverrides(applyIdentityDefaults({})),
+            ),
           ),
         ),
       );
     }
     return applyTelegramEnvOverrides(
       applyTTSEnvOverrides(
-        applyWebSearchEnvOverrides(
-          applyDeepResearchEnvOverrides(
-            applyIdentityDefaults(validated.data as ClawdisConfig),
+        applyAiClubEnvOverrides(
+          applyWebSearchEnvOverrides(
+            applyDeepResearchEnvOverrides(
+              applyIdentityDefaults(validated.data as ClawdisConfig),
+            ),
           ),
         ),
       ),
@@ -1082,8 +1108,10 @@ export function loadConfig(): ClawdisConfig {
     console.error(`Failed to read config at ${configPath}`, err);
     return applyTelegramEnvOverrides(
       applyTTSEnvOverrides(
-        applyWebSearchEnvOverrides(
-          applyDeepResearchEnvOverrides(applyIdentityDefaults({})),
+        applyAiClubEnvOverrides(
+          applyWebSearchEnvOverrides(
+            applyDeepResearchEnvOverrides(applyIdentityDefaults({})),
+          ),
         ),
       ),
     );
@@ -1221,6 +1249,8 @@ function applyWebSearchEnvOverrides(config: ClawdisConfig): ClawdisConfig {
   const hasGeminiModel = process.env.WEB_SEARCH_GEMINI_MODEL !== undefined;
   const cliPath = process.env.WEB_SEARCH_CLI_PATH;
   const timeoutMsEnv = process.env.WEB_SEARCH_TIMEOUT_MS;
+  const wrapperDirEnv = process.env.WEB_SEARCH_WRAPPER_DIR;
+  const webFetchScriptPathEnv = process.env.WEB_FETCH_SCRIPT_PATH;
   const hasTimeout = timeoutMsEnv !== undefined;
   const customPatterns = process.env.WEB_SEARCH_CUSTOM_PATTERNS;
 
@@ -1232,6 +1262,8 @@ function applyWebSearchEnvOverrides(config: ClawdisConfig): ClawdisConfig {
     requireConfirmation: config.webSearch?.requireConfirmation ?? WEB_SEARCH_DEFAULTS.requireConfirmation,
     geminiModel: config.webSearch?.geminiModel ?? WEB_SEARCH_DEFAULTS.geminiModel,
     customPatterns: config.webSearch?.customPatterns,
+    wrapperDir: config.webSearch?.wrapperDir,
+    webFetchScriptPath: config.webSearch?.webFetchScriptPath,
   };
 
 
@@ -1248,6 +1280,18 @@ function applyWebSearchEnvOverrides(config: ClawdisConfig): ClawdisConfig {
     const normalizedPath = cliPath.trim();
     if (normalizedPath) {
       webSearch.cliPath = normalizedPath;
+    }
+  }
+  if (wrapperDirEnv) {
+    const normalized = wrapperDirEnv.trim();
+    if (normalized) {
+      webSearch.wrapperDir = normalized;
+    }
+  }
+  if (webFetchScriptPathEnv) {
+    const normalized = webFetchScriptPathEnv.trim();
+    if (normalized) {
+      webSearch.webFetchScriptPath = normalized;
     }
   }
   if (timeoutMsEnv) {
@@ -1274,6 +1318,37 @@ function applyWebSearchEnvOverrides(config: ClawdisConfig): ClawdisConfig {
   return {
     ...config,
     webSearch,
+  };
+}
+
+function applyAiClubEnvOverrides(config: ClawdisConfig): ClawdisConfig {
+  const cliPath = process.env.AI_CLUB_CLI_PATH;
+  const timeoutMsEnv = process.env.AI_CLUB_TIMEOUT_MS;
+
+  const aiClub: AiClubConfig = {
+    cliPath: config.aiClub?.cliPath ?? AI_CLUB_DEFAULTS.cliPath,
+    timeoutMs: config.aiClub?.timeoutMs ?? AI_CLUB_DEFAULTS.timeoutMs,
+  };
+
+  if (cliPath) {
+    const normalized = cliPath.trim();
+    if (normalized) {
+      aiClub.cliPath = normalized;
+    }
+  }
+
+  if (timeoutMsEnv) {
+    const parsed = parseInt(timeoutMsEnv, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      aiClub.timeoutMs = parsed;
+    } else {
+      console.warn(`[ai-club] Ignoring invalid AI_CLUB_TIMEOUT_MS: ${timeoutMsEnv}`);
+    }
+  }
+
+  return {
+    ...config,
+    aiClub,
   };
 }
 
@@ -1352,7 +1427,9 @@ export async function readConfigFileSnapshot(): Promise<ConfigFileSnapshot> {
   const exists = fs.existsSync(configPath);
   if (!exists) {
     const config = applyTelegramEnvOverrides(
-      applyDeepResearchEnvOverrides(applyTalkApiKey({})),
+      applyAiClubEnvOverrides(
+        applyDeepResearchEnvOverrides(applyTalkApiKey({})),
+      ),
     );
     return {
       path: configPath,
@@ -1402,7 +1479,9 @@ export async function readConfigFileSnapshot(): Promise<ConfigFileSnapshot> {
       parsed: parsedRes.parsed,
       valid: true,
       config: applyTelegramEnvOverrides(
-        applyDeepResearchEnvOverrides(applyTalkApiKey(validated.config)),
+        applyAiClubEnvOverrides(
+          applyDeepResearchEnvOverrides(applyTalkApiKey(validated.config)),
+        ),
       ),
       issues: [],
     };
