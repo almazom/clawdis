@@ -12,6 +12,7 @@ const execAsync = promisify(exec);
 
 // Import AI analysis
 import { analyzeWithAI, type AIAnalysis } from './ai-analysis.js';
+import { formatTelegramMessage } from '../telegram/formatter.js';
 
 export interface AgentResult {
   agent: string;
@@ -32,55 +33,90 @@ export interface MultiAgentResult {
   tips: string[];
   htmlReport: string;
   generatedAt: Date;
-  aiAnalysis?: AIAnalysis;
+  aiAnalysis: AIAnalysis | null;
 }
 
 const AGENTS = [
   { name: 'gemini', script: 'gemini_cli_web', display: 'Gemini CLI', emoji: '⚡' },
   { name: 'kimi', script: 'kimi_cli_web', display: 'Kimi CLI', emoji: '🔍' },
-  { name: 'qwen', script: 'qwen_cli_web', display: 'Qwen CLI', emoji: '🐉' },
-  { name: 'minimax', script: 'minimax_cli_web', display: 'MiniMax Claude', emoji: '🧠' },
-  { name: 'glm', script: 'glm_cli_web', display: 'GLM Claude', emoji: '🪄' },
+  // MiniMax/GLM removed - no real web search (just LLM knowledge)
 ];
+
+// Configuration for wait strategy
+const MIN_AGENTS_FOR_ANALYSIS = 2;  // Need at least 2 for meaningful AI analysis
+
+export interface MultiAgentOptions {
+  onStatus?: (status: string) => void;
+  onFirstResult?: (result: AgentResult) => void;  // Called immediately when first agent succeeds
+}
 
 export async function executeMultiAgentWebSearch(
   query: string,
-  onStatus?: (status: string) => void
+  onStatusOrOptions?: ((status: string) => void) | MultiAgentOptions
 ): Promise<MultiAgentResult> {
+  // Handle both legacy callback and new options format
+  const options: MultiAgentOptions = typeof onStatusOrOptions === 'function'
+    ? { onStatus: onStatusOrOptions }
+    : onStatusOrOptions || {};
+
+  const { onStatus, onFirstResult } = options;
+
   const startTime = Date.now();
-  const agentPromises: Promise<AgentResult>[] = [];
+  const results: AgentResult[] = [];
+  let firstResultSent = false;
 
   onStatus?.(`🥊 Starting AI Fight: "${query}"`);
-  onStatus?.(`⚔️  Launching 5 AI agents...`);
+  onStatus?.(`⚔️  Launching ${AGENTS.length} AI agents in parallel...`);
 
-  // Spawn all 5 agents in parallel
-  for (const agent of AGENTS) {
-    const promise = runAgent(agent, query, onStatus);
-    agentPromises.push(promise);
-  }
+  // Spawn all agents in parallel
+  const agentPromises = AGENTS.map(async (agent) => {
+    const result = await runAgent(agent, query, onStatus);
+    results.push(result);
 
-  // Wait for all
-  const results = await Promise.all(agentPromises);
+    // 🚀 IMMEDIATELY send FIRST successful result to user (fire and forget)
+    if (result.success && !firstResultSent) {
+      firstResultSent = true;
+      onStatus?.(`🚀 WINNER: ${result.agentDisplay} finished first! (${result.durationMs}ms) - Sending to user NOW`);
+      onFirstResult?.(result);  // User gets result instantly!
+    }
+
+    return result;
+  });
+
+  // ⏳ Wait for ALL agents to complete (background, don't block user)
+  // User already got winner, we continue gathering data
+  onStatus?.(`⏳ Waiting for remaining agents to complete...`);
+  const allResults = await Promise.all(agentPromises);
+
   const totalDuration = Date.now() - startTime;
+  const successfulCount = allResults.filter(r => r.success).length;
+  const failedCount = allResults.filter(r => !r.success).length;
+
+  onStatus?.(`✅ All agents completed! Success: ${successfulCount}/${AGENTS.length}, Failed: ${failedCount}`);
 
   // Find winner (fastest successful)
-  const successful = results.filter(r => r.success);
+  const successful = allResults.filter(r => r.success);
   const winner = successful.sort((a, b) => a.durationMs - b.durationMs)[0];
 
   // Generate summary and insights
-  const { summary, insights, tips } = analyzeResults(query, results, winner);
+  const { summary, insights, tips } = analyzeResults(query, allResults, winner);
 
-  // Generate AI-powered analysis
-  onStatus?.('🤖 Generating AI analysis...');
-  const aiAnalysis = await analyzeWithAI(query, results);
+  // Generate AI-powered analysis (only if we have 2+ results)
+  let aiAnalysis: AIAnalysis | null = null;
+  if (successful.length >= MIN_AGENTS_FOR_ANALYSIS) {
+    onStatus?.('🤖 Generating AI analysis from all agents...');
+    aiAnalysis = await analyzeWithAI(query, allResults);
+  } else if (successful.length === 1) {
+    onStatus?.('📝 Only 1 agent succeeded, skipping comparison analysis');
+  }
 
-  // Generate HTML report
-  const htmlReport = generateHtmlReport(query, results, summary, insights, tips, totalDuration, winner, aiAnalysis);
+  // Generate HTML report with ALL results
+  const htmlReport = generateHtmlReport(query, allResults, summary, insights, tips, totalDuration, winner, aiAnalysis);
 
   return {
     query,
     winner,
-    agents: results,
+    agents: allResults,
     summary,
     insights,
     tips,
@@ -138,14 +174,34 @@ async function runAgent(
 function extractResponse(output: string): string {
   try {
     const json = JSON.parse(output);
+    // Claude CLI format (GLM/MiniMax): {type: "result", result: "..."}
+    if (json.type === 'result' && json.result) return json.result;
+    // Gemini CLI format: {response: "..."}
     if (json.response) return json.response;
+    // Kimi CLI format: {role: "assistant", content: "..."}
+    if (json.content && typeof json.content === 'string') return json.content;
+    // Array format: [{text: "..."}]
     if (Array.isArray(json) && json[0]?.text) return json[0].text;
+    // Direct string
     if (typeof json === 'string') return json;
   } catch { }
+
+  // Try to find JSON in the output (e.g., after "Loaded cached credentials.")
+  const jsonMatch = output.match(/\{[\s\S]*"(?:response|content|result)"[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const json = JSON.parse(jsonMatch[0]);
+      // Claude CLI format
+      if (json.type === 'result' && json.result) return json.result;
+      if (json.response) return json.response;
+      if (json.content) return json.content;
+    } catch { }
+  }
 
   const cleaned = output
     .replace(/--- RESULT ---/g, '')
     .replace(/\[Tool:.*?\]/g, '')
+    .replace(/Loaded cached credentials\.\s*/g, '')
     .trim();
 
   return cleaned;
@@ -203,213 +259,269 @@ function generateHtmlReport(
   tips: string[],
   totalDuration: number,
   winner?: AgentResult,
-  aiAnalysis?: AIAnalysis
+  aiAnalysis?: AIAnalysis | null
 ): string {
   const successful = results.filter(r => r.success);
   const maxDuration = Math.max(...results.map(r => r.durationMs), 1);
 
-  const agentBars = results.map(r => {
-    const width = Math.max(5, (r.durationMs / maxDuration) * 100);
-    const color = r.success ? (r === winner ? '#ffd700' : '#00d4ff') : '#ff6b6b';
-    const status = r.success ? '✅' : '❌';
+  // Helper to escape HTML
+  const escapeHtml = (text: string): string => {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/\n/g, '<br>');
+  };
+
+  // Helper to convert basic markdown to HTML
+  const markdownToHtml = (text: string): string => {
+    return text
+      // Escape HTML first
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      // Headers
+      .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+      .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+      // Bold and italic
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/__(.+?)__/g, '<strong>$1</strong>')
+      .replace(/_(.+?)_/g, '<em>$1</em>')
+      // Code blocks
+      .replace(/```[\s\S]*?```/g, (match) => {
+        const code = match.slice(3, -3).replace(/^\w+\n/, '');
+        return `<pre><code>${code}</code></pre>`;
+      })
+      // Inline code
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      // Links
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+      // Lists
+      .replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
+      .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+      .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+      // Horizontal rules
+      .replace(/^---+$/gm, '<hr>')
+      // Paragraphs (double newlines)
+      .replace(/\n\n/g, '</p><p>')
+      // Single newlines to <br>
+      .replace(/\n/g, '<br>');
+  };
+
+  // Generate full agent reports (NYT STYLE - each agent gets full section)
+  const agentReports = results.map((r, idx) => {
+    const isWinner = r === winner;
+    const emoji = r.success ? (isWinner ? '🏆' : '✅') : '❌';
+    const winnerBadge = isWinner ? '<span class="agent-badge">WINNER</span>' : '';
+
     return `
-      <div style="margin: 12px 0;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-          <span><strong>${r.agentDisplay}</strong> ${status}</span>
-          <span>${r.durationMs}мс ${r.success ? '⭐'.repeat(r.quality || 0) : ''}</span>
+      <section class="agent-section ${r.success ? '' : 'failed'} ${isWinner ? 'winner' : ''}">
+        <div class="agent-header">
+          <span class="agent-name">${emoji} ${r.agentDisplay} ${winnerBadge}</span>
+          <span class="agent-meta">⏱️ ${(r.durationMs / 1000).toFixed(1)}s ${r.quality ? '• ' + '⭐'.repeat(r.quality) : ''}</span>
         </div>
-        <div style="background: #333; border-radius: 4px; height: 24px; position: relative;">
-          <div style="background: ${color}; height: 100%; border-radius: 4px; width: ${width}%; transition: width 0.5s;"></div>
-          <span style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: #000; font-weight: bold; font-size: 12px;">
-            ${Math.round(width)}%
-          </span>
-        </div>
-      </div>
+        ${r.success ? `
+          <div class="agent-response">
+            <p>${markdownToHtml(r.response || 'Empty response')}</p>
+          </div>
+        ` : `
+          <div class="agent-error">
+            <strong>Error:</strong> ${escapeHtml(r.error || 'Unknown error')}
+          </div>
+        `}
+      </section>
     `;
   }).join('');
 
-  const insightsList = insights.map(i => `<li>${i}</li>`).join('');
-  const tipsList = tips.map(t => `<li>${t}</li>`).join('');
+  // Performance comparison table
+  const perfTable = results
+    .sort((a, b) => a.durationMs - b.durationMs)
+    .map(r => `
+      <tr class="${r === winner ? 'winner-row' : ''}">
+        <td><strong>${r.agentDisplay}</strong>${r === winner ? ' 🏆' : ''}</td>
+        <td>${r.success ? '✅' : '❌'}</td>
+        <td>${(r.durationMs / 1000).toFixed(1)}с</td>
+        <td>${r.quality ? '⭐'.repeat(r.quality) : '-'}</td>
+        <td>${((r.durationMs / maxDuration) * 100).toFixed(0)}%</td>
+      </tr>
+    `).join('');
 
-  const winnerBanner = winner
-    ? `<div style="background: linear-gradient(135deg, #ffd700, #ff8c00); color: #000; padding: 25px; border-radius: 12px; text-align: center; margin: 20px 0; box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);">
-        <h2 style="margin: 0; color: #000; font-size: 2em;">🏆 Победитель: ${winner.agentDisplay}</h2>
-        <p style="margin: 15px 0 0 0; font-size: 1.4em;">⏱️ ${(winner.durationMs / 1000).toFixed(1)}с | Качество: ${'⭐'.repeat(winner.quality || 0)}</p>
-      </div>`
-    : '';
+  const dateStr = new Date().toLocaleDateString('ru-RU', { year: 'numeric', month: 'long', day: 'numeric' });
 
+  // Fitzcarraldo-style minimal HTML report
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>🥊 AI Бой: Поиск</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${query.substring(0, 60)}</title>
+  <meta name="robots" content="noindex, nofollow">
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 950px; margin: 0 auto; padding: 20px; background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%); color: #eee; min-height: 100vh; }
-    h1 { color: #ffd700; border-bottom: 3px solid #ffd700; padding-bottom: 15px; font-size: 2em; text-align: center; }
-    h2 { color: #00d4ff; margin-top: 35px; border-left: 4px solid #00d4ff; padding-left: 15px; }
-    .query { background: linear-gradient(135deg, #16213e, #1a1a2e); padding: 20px; border-radius: 10px; font-size: 1.2em; margin: 20px 0; border: 1px solid #00d4ff; }
-    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; margin: 25px 0; }
-    .stat { background: linear-gradient(135deg, #16213e, #0f3460); padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #333; transition: transform 0.2s; }
-    .stat:hover { transform: translateY(-3px); border-color: #00d4ff; }
-    .stat-value { font-size: 2.2em; font-weight: bold; color: #00d4ff; }
-    .stat-label { color: #aaa; font-size: 0.95em; margin-top: 5px; }
-    .chart-container { background: #16213e; padding: 25px; border-radius: 12px; margin: 20px 0; border: 1px solid #333; }
-    .chart-title { color: #ffd700; margin-bottom: 20px; font-size: 1.2em; }
-    table { width: 100%; border-collapse: collapse; margin: 20px 0; background: #16213e; border-radius: 8px; overflow: hidden; }
-    th, td { padding: 14px 12px; text-align: left; border-bottom: 1px solid #333; }
-    th { background: linear-gradient(135deg, #0f3460, #16213e); color: #ffd700; font-weight: 600; }
-    tr:hover { background: rgba(0, 212, 255, 0.05); }
-    .success { background: rgba(0, 255, 136, 0.08); }
-    .failed { background: rgba(255, 107, 107, 0.08); }
-    .summary { background: linear-gradient(135deg, #16213e, #0f3460); padding: 25px; border-radius: 10px; border-left: 5px solid #ffd700; white-space: pre-wrap; line-height: 1.6; }
-    .insights, .tips { background: #16213e; padding: 25px; border-radius: 10px; margin: 15px 0; }
-    .insights { border-left: 5px solid #00d4ff; }
-    .tips { border-left: 5px solid #ff6b6b; }
-    ul { margin: 0; padding-left: 25px; }
-    li { margin: 8px 0; line-height: 1.5; }
-    .timestamp { color: #666; font-size: 0.9em; margin-top: 40px; text-align: center; padding-top: 20px; border-top: 1px solid #333; }
-    .winner-badge { display: inline-block; background: #ffd700; color: #000; padding: 3px 10px; border-radius: 20px; font-size: 0.8em; margin-left: 10px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Times New Roman', Times, Georgia, serif;
+      font-size: 18px;
+      line-height: 1.7;
+      color: #1a1a1a;
+      background: #fff;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 60px 24px 100px;
+    }
+
+    header {
+      margin-bottom: 60px;
+      padding-bottom: 30px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .date {
+      font-size: 13px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      font-size: 32px;
+      font-weight: 400;
+      line-height: 1.2;
+      margin-bottom: 16px;
+      font-style: italic;
+    }
+
+    .query {
+      font-size: 15px;
+      color: #666;
+    }
+
+    .agent {
+      margin-bottom: 50px;
+      padding-bottom: 50px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .agent:last-child {
+      border-bottom: none;
+    }
+
+    .agent-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #333;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .winner-tag {
+      background: #1a1a1a;
+      color: #fff;
+      font-size: 10px;
+      padding: 3px 8px;
+      letter-spacing: 0.1em;
+    }
+
+    .agent-content {
+      font-size: 17px;
+      line-height: 1.8;
+    }
+
+    .agent-content p { margin-bottom: 1em; }
+    .agent-content ul, .agent-content ol { margin: 1em 0; padding-left: 1.5em; }
+    .agent-content li { margin-bottom: 0.5em; }
+    .agent-content strong { font-weight: 600; }
+    .agent-content em { font-style: italic; }
+    .agent-content code { font-family: monospace; background: #f5f5f5; padding: 2px 6px; }
+    .agent-content pre { background: #f5f5f5; padding: 16px; overflow-x: auto; margin: 1em 0; }
+    .agent-content h2, .agent-content h3, .agent-content h4 { font-size: 17px; font-weight: 600; margin: 1.5em 0 0.5em; }
+    .agent-content a { color: #1a1a1a; }
+
+    .agent-error {
+      color: #c00;
+      font-size: 14px;
+      font-style: italic;
+    }
+
+    footer {
+      margin-top: 60px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+      font-size: 12px;
+      color: #999;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      body { padding: 40px 16px 60px; font-size: 16px; }
+      h1 { font-size: 26px; }
+    }
   </style>
 </head>
 <body>
-  <h1>🥊 AI Бой: Веб-Поиск</h1>
+  <header>
+    <div class="date">${dateStr}</div>
+    <h1>AI Web Search</h1>
+    <p class="query">${escapeHtml(query)}</p>
+  </header>
 
-  <div class="query">
-    <strong>Запрос:</strong> ${query}
-  </div>
+  ${results.filter(r => r.success).map(r => `
+    <article class="agent">
+      <div class="agent-title">
+        ${r.agentDisplay}
+        ${r === winner ? '<span class="winner-tag">Fastest</span>' : ''}
+      </div>
+      <div class="agent-content">
+        ${markdownToHtml(r.response || '')}
+      </div>
+    </article>
+  `).join('')}
 
-  ${winnerBanner}
-
-  <div class="stats">
-    <div class="stat">
-      <div class="stat-value">${results.length}</div>
-      <div class="stat-label">🤖 Агентов</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value">${successful.length}</div>
-      <div class="stat-label">✅ Успешно</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value">${(totalDuration / 1000).toFixed(1)}с</div>
-      <div class="stat-label">⏱️ Общее время</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value">${Math.round(successful.reduce((sum, r) => sum + r.durationMs, 0) / successful.length || 0)}мс</div>
-      <div class="stat-label">📊 Среднее</div>
-    </div>
-  </div>
-
-  <h2>📊 Время отклика (визуализация)</h2>
-  <div class="chart-container">
-    <div class="chart-title">⏱️ Скорость ответа агентов (от самого быстрого к медленному)</div>
-    ${agentBars}
-  </div>
-
-  <h2>📋 Детализация</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>🤖 Агент</th>
-        <th>Статус</th>
-        <th>⏱️ Время</th>
-        <th>⭐ Качество</th>
-        <th>📝 Ответ</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${results.map(r => `
-        <tr class="${r.success ? 'success' : 'failed'}">
-          <td><strong>${r.agentDisplay}</strong>${r === winner ? '<span class="winner-badge">🏆 Победитель</span>' : ''}</td>
-          <td>${r.success ? '✅' : '❌'}</td>
-          <td>${r.durationMs}мс</td>
-          <td>${r.quality ? '⭐'.repeat(r.quality) : '-'}</td>
-          <td>${r.success ? (r.response?.substring(0, 200) + '...' || 'OK') : r.error}</td>
-        </tr>
+  ${results.filter(r => !r.success).length > 0 ? `
+    <article class="agent">
+      <div class="agent-title">Failed Agents</div>
+      ${results.filter(r => !r.success).map(r => `
+        <p class="agent-error">${r.agentDisplay}: ${escapeHtml(r.error || 'Unknown error')}</p>
       `).join('')}
-    </tbody>
-  </table>
+    </article>
+  ` : ''}
 
-  <h2>📈 Итоги</h2>
-  <div class="summary">${summary}</div>
-
-  ${aiAnalysis ? `
-  <h2>🤖 AI Анализ</h2>
-  <div class="ai-analysis" style="background: linear-gradient(135deg, #16213e, #0f3460); padding: 25px; border-radius: 10px; border-left: 5px solid #00d4ff; margin: 20px 0;">
-    <div style="margin-bottom: 20px;">
-      <h3 style="color: #ffd700; margin-bottom: 10px;">📋 Краткое резюме</h3>
-      <p style="line-height: 1.6;">${aiAnalysis.summary}</p>
-    </div>
-
-    <div style="margin-bottom: 20px;">
-      <h3 style="color: #ffd700; margin-bottom: 10px;">📌 Общие выводы</h3>
-      <ul style="line-height: 1.6;">
-        ${aiAnalysis.consensus.map(c => `<li>${c}</li>`).join('')}
-      </ul>
-    </div>
-
-    <div style="margin-bottom: 20px;">
-      <h3 style="color: #ffd700; margin-bottom: 10px;">💡 Уникальные особенности</h3>
-      <ul style="line-height: 1.6;">
-        ${aiAnalysis.insights.map(i => `<li>${i}</li>`).join('')}
-      </ul>
-    </div>
-
-    <div style="margin-bottom: 20px;">
-      <h3 style="color: #ffd700; margin-bottom: 10px;">⚠️ Противоречия</h3>
-      <p style="line-height: 1.6;">${aiAnalysis.contradictions}</p>
-    </div>
-
-    <div style="margin-bottom: 20px; background: linear-gradient(135deg, #ffd700, #ff8c00); color: #000; padding: 15px; border-radius: 8px;">
-      <h3 style="color: #000; margin-bottom: 10px;">⭐ Лучший ответ: ${aiAnalysis.bestAgent}</h3>
-      <p style="color: #000; line-height: 1.6;"><strong>Обоснование:</strong> ${aiAnalysis.bestReason}</p>
-    </div>
-
-    <div>
-      <h3 style="color: #ffd700; margin-bottom: 10px;">🎯 Рекомендации</h3>
-      <p style="line-height: 1.6;">${aiAnalysis.recommendations}</p>
-    </div>
-  </div>
-  ` : '<div style="background: #16213e; padding: 20px; border-radius: 10px; border-left: 5px solid #ff6b6b; margin: 20px 0;"><h3 style="color: #ff6b6b;">⚠️ AI Анализ недоступен</h3><p style="color: #aaa;">Анализ не был сгенерирован (возможно, ошибка или таймаут)</p></div>'}
-
-  <h2>💡 Инсайты</h2>
-  <div class="insights">
-    <ul>
-      ${insightsList}
-    </ul>
-  </div>
-
-  <h2>🎯 Рекомендации</h2>
-  <div class="tips">
-    <ul>
-      ${tipsList}
-    </ul>
-  </div>
-
-  <div class="timestamp">
-    🕐 Сгенерировано: ${new Date().toLocaleString('ru-RU')}
-  </div>
+  <footer>
+    ${results.length} agents • ${(totalDuration / 1000).toFixed(1)}s
+  </footer>
 </body>
 </html>`;
 }
 
 /**
  * Generate Telegram message with agent attribution
+ * Returns MarkdownV2-escaped text ready for Telegram
  */
 export function formatTelegramWithAgent(result: MultiAgentResult): string {
   if (!result.winner) {
-    return `❌ Ни один AI агент не ответил успешно.
-
-${result.summary}`;
+    const message = `❌ Ни один AI агент не ответил успешно.\n\n${result.summary}`;
+    return formatTelegramMessage(message);
   }
 
   const truncated = result.winner.response?.substring(0, 500) || '';
+  const stars = '⭐'.repeat(result.winner.quality || 0);
+  const queryPreview = result.query.substring(0, 50) + (result.query.length > 50 ? '...' : '');
+  const responsePreview = truncated + (truncated.length >= 500 ? '...' : '');
 
-  return `🌐 **${result.winner.agentDisplay}** ${'⭐'.repeat(result.winner.quality || 0)}
+  const message = `🌐 **${result.winner.agentDisplay}** ${stars}
 
-${truncated}${truncated.length >= 500 ? '...' : ''}
+${responsePreview}
 
 ---
-_Время ответа: ${result.winner.durationMs}мс | Запрос: "${result.query.substring(0, 50)}${result.query.length > 50 ? '...' : ''}"_
+_Время ответа: ${result.winner.durationMs}мс | Запрос: "${queryPreview}"_`;
 
-[Полный отчёт →](#)`;
+  return formatTelegramMessage(message);
 }
