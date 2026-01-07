@@ -2,9 +2,42 @@
  * Web Search CLI Executor
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
 import type { WebSearchResult } from './messages.js';
 import type { ExecuteResult, ExecuteOptions } from '../deep-research/executor.js';
 import { loadConfig } from '../config/config.js';
+
+const execFileAsync = promisify(execFile);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DEFAULT_WEB_SEARCH_SCRIPT = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "scripts",
+  "web_search_with_gemini.sh",
+);
+
+function resolveWebSearchCliPath(explicitPath?: string): string {
+  const trimmed = explicitPath?.trim();
+  if (!trimmed) return DEFAULT_WEB_SEARCH_SCRIPT;
+
+  const hasPathSeparator = trimmed.includes(path.sep);
+  if (hasPathSeparator && !fs.existsSync(trimmed)) {
+    console.warn(
+      `[web-search] CLI not found at ${trimmed}, falling back to ${DEFAULT_WEB_SEARCH_SCRIPT}`,
+    );
+    return DEFAULT_WEB_SEARCH_SCRIPT;
+  }
+
+  return trimmed;
+}
 
 export interface ExecuteWebSearchOptions extends Omit<ExecuteOptions, 'topic'> {
   cliPath?: string;
@@ -59,15 +92,10 @@ export async function executeWebSearch(
       throw new Error("Query too long (max 2000 characters)");
     }
     
-    // Use CUSTOM SKILL BASH SCRIPT (web-search-with-gemini)
-    const { exec } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execAsync = promisify(exec);
+    const cliPath = resolveWebSearchCliPath(options.cliPath ?? cfg.webSearch?.cliPath);
+    console.log(`[web-search] Executing web search: ${cliPath} (timeout: ${timeoutMs}ms)`);
     
-    const cliPath = "/home/almaz/zoo_flow/clawdis/scripts/web_search_with_gemini.sh";
-    console.log(`[web-search] Executing CUSTOM SKILL: ${cliPath} "${query}" (timeout: ${timeoutMs}ms)`);
-    
-    const { stdout, stderr } = await execAsync(`"${cliPath}" ${JSON.stringify(query)}`, {
+    const { stdout, stderr } = await execFileAsync(cliPath, [query], {
       timeout: timeoutMs,
       env: { ...process.env, PATH: process.env.PATH },
     });
