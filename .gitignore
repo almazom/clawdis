@@ -187,3 +187,10 @@ TELEGRAM_MARKDOWN_FIX.md
 *_fix.md
 *FIX.md
 *_FIX.md
+
+# Temporary debugging/analysis files
+for_kimi_*.txt
+for_*.txt
+*_why_make*.txt
+*_analysis.md
+news_analysis_*.md

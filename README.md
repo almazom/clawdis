@@ -89,6 +89,8 @@ Send these in WhatsApp/Telegram/WebChat (group commands are owner-only):
 - `/new` or `/reset` — reset the session
 - `/think <level>` — off|minimal|low|medium|high
 - `/verbose on|off`
+- `/ai_day` — AI Club daily summary (Telegram only)
+- `/ai_week` — AI Club weekly summary (Telegram only)
 - `/restart` — restart the gateway (owner-only in groups)
 - `/activation mention|always` — group activation toggle (groups only)
 

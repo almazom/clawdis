@@ -219,7 +219,7 @@ function createWhatsAppLoginTool(): AnyAgentTool {
       timeoutMs: Type.Optional(Type.Number()),
       force: Type.Optional(Type.Boolean()),
     }),
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId: string, args: unknown) => {
       const action = (args as { action?: string })?.action ?? "start";
       if (action === "wait") {
         const result = await waitForWebLogin({
@@ -313,6 +313,7 @@ export function createClawdisCodingTools(options?: {
     createWhatsAppLoginTool(),
     ...createClawdisTools(),
     createWebSearchTool(),
+    createWebFetchTool(),
   ];
   return tools.map(normalizeToolParameters);
 }
@@ -347,6 +348,57 @@ function checkAndIncrementToolCall(toolName: string): boolean {
   return data.count <= MAX_TOOL_CALLS_PER_MINUTE;
 }
 
+function extractWebSearchQuery(args: unknown): string {
+  if (typeof args === "string") {
+    const trimmed = args.trim();
+    if (!trimmed) return "";
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return extractWebSearchQuery(parsed);
+      } catch {
+        return trimmed;
+      }
+    }
+    return trimmed;
+  }
+
+  if (!args || typeof args !== "object") return "";
+
+  const record = args as Record<string, unknown>;
+  const candidate =
+    record.query ?? record.q ?? record.text ?? record.input;
+
+  return typeof candidate === "string" ? candidate.trim() : "";
+}
+
+function extractWebFetchArgs(args: unknown): { url: string; goal?: string } {
+  if (typeof args === "string") {
+    const trimmed = args.trim();
+    if (!trimmed) return { url: "" };
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return extractWebFetchArgs(parsed);
+      } catch {
+        return { url: trimmed };
+      }
+    }
+    return { url: trimmed };
+  }
+
+  if (!args || typeof args !== "object") return { url: "" };
+
+  const record = args as Record<string, unknown>;
+  const rawUrl = record.url ?? record.link ?? record.href ?? record.input;
+  const rawGoal = record.goal ?? record.mode ?? record.action;
+
+  return {
+    url: typeof rawUrl === "string" ? rawUrl.trim() : "",
+    goal: typeof rawGoal === "string" && rawGoal.trim() ? rawGoal.trim() : undefined,
+  };
+}
+
 export function createWebSearchTool(): AnyAgentTool {
   return {
     name: "web_search",
@@ -357,16 +409,19 @@ export function createWebSearchTool(): AnyAgentTool {
         examples: ["weather in Moscow today", "latest news about AI", "who won the world cup 2022"],
       }),
     }),
-    execute: async ({ query }: { query: string }) => {
-      console.log('[DEBUG] web_search called with query:', JSON.stringify(query), 'type:', typeof query);
+    execute: async (_toolCallId: string, args: unknown) => {
+      const query = extractWebSearchQuery(args);
+      const argsType = Array.isArray(args) ? "array" : typeof args;
+      console.log('[DEBUG] web_search called with query:', JSON.stringify(query), 'args type:', argsType);
       
       // Validate query parameter
       if (!query || query.trim() === '') {
         console.error('[web_search] ERROR: Query is empty or undefined');
         console.error('[web_search] This usually means the AI agent failed to extract the search terms from the message');
+        console.error('[web_search] Raw args:', JSON.stringify(args));
         return {
           content: [
-            { type: "text", text: "❌ Ошибка: не удалось извлечь поисковый запрос из сообщения. Убедитесь, что указали что искать после /web" },
+            { type: "text", text: "❌ Ошибка: не удалось извлечь поисковый запрос из сообщения. Попробуйте сформулировать запрос иначе." },
           ],
         };
       }
@@ -383,7 +438,7 @@ export function createWebSearchTool(): AnyAgentTool {
         // Use the fixed executor instead of CLI
         const { executeWebSearch } = await import("../web-search/executor.js");
         
-        const result = await executeWebSearch(query, { timeoutMs: 90000 }); // 90s for deep research
+        const result = await executeWebSearch(query);
         
         if (result.success && result.result?.response) {
           return {
@@ -411,6 +466,79 @@ export function createWebSearchTool(): AnyAgentTool {
         return {
           content: [
             { type: "text", text: `✂︎ Ошибка: ${String(error)}` },
+          ],
+        };
+      }
+    },
+  } as unknown as AnyAgentTool;
+}
+
+/**
+ * URL detection helper
+ */
+function isUrl(text: string): boolean {
+  const urlPattern = /^(https?:\/\/|www\.)[^\s<>"{}|\\^`\[\]]+$/i;
+  return urlPattern.test(text.trim());
+}
+
+export function createWebFetchTool(): AnyAgentTool {
+  return {
+    name: "web_fetch",
+    description: "Fetch content from a URL. Use when user sends a link/URL and wants to read its content. Also works for summarizing articles, docs, or web pages.",
+    parameters: Type.Object({
+      url: Type.String({
+        description: "The URL to fetch content from",
+        examples: ["https://example.com/article", "https://docs.python.org/3.12/"],
+      }),
+      goal: Type.Optional(Type.String({
+        description: "What to do with the content: 'summary', 'extract', 'analyze', or 'full'",
+        default: "summary",
+      })),
+    }),
+    execute: async (_toolCallId: string, args: unknown) => {
+      const { url, goal } = extractWebFetchArgs(args);
+      const safeGoal =
+        goal && ["summary", "extract", "analyze", "full"].includes(goal)
+          ? goal
+          : undefined;
+      console.log('[DEBUG] web_fetch called with url:', JSON.stringify(url), 'goal:', safeGoal);
+
+      // Validate URL
+      if (!url || !isUrl(url)) {
+        return {
+          content: [
+            { type: "text", text: "❌ Ошибка: неверный URL. Убедитесь, что ссылка начинается с http:// или https://" },
+          ],
+        };
+      }
+
+      try {
+        // Loop protection
+        if (!checkAndIncrementToolCall('web_fetch')) {
+          return {
+            content: [
+              { type: "text", text: "✂︎ Превышен лимит вызовов web_fetch (защита от бесконечного цикла)" },
+            ],
+          };
+        }
+
+        // Use gemini-based webReader adapter (has network access via Google API)
+        // This works in isolated environments where direct fetch() is blocked
+        const { fetchViaWebReader } = await import("../web-fetch/webReader-adapter.js");
+        const content = await fetchViaWebReader(url, { timeout: 120000, goal: safeGoal });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: content,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `❌ Ошибка загрузки URL: ${String(error).slice(0, 200)}` },
           ],
         };
       }

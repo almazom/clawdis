@@ -49,7 +49,7 @@ cd "$WORK_DIR"
 # Load environment from .env if exists (for development)
 if [ -f ".env" ]; then
     set -a
-    source .env
+    source "$WORK_DIR/.env"
     set +a
     log "Loaded .env file"
 fi
@@ -71,7 +71,7 @@ log "Starting gateway on port 18789..."
 DIST_ENTRY="${WORK_DIR}/dist/index.js"
 if [ -f "$DIST_ENTRY" ]; then
     log "Using compiled gateway entry: ${DIST_ENTRY}"
-    exec node "$DIST_ENTRY" gateway --port 18789 --allow-unconfigured
+    exec node "$DIST_ENTRY" gateway --port 18789 --allow-unconfigured --verbose
 fi
 
 # Fallback to tsx via pnpm (dev mode)
