@@ -1,7 +1,9 @@
 #!/bin/bash
 
-# Ensure fnm/node PATH is available for gemini CLI
-export PATH="/home/almaz/.local/share/fnm/node-versions/v22.21.1/installation/bin:$PATH"
+# Ensure node PATH is available for gemini CLI if configured
+if [[ -n "${CLAWDIS_NODE_BIN_PATH:-}" ]]; then
+  export PATH="${CLAWDIS_NODE_BIN_PATH}:$PATH"
+fi
 
 # Enable error handling
 set -e  # Exit on error
@@ -88,8 +90,10 @@ FULL_PROMPT="$QUERY $TAIL"
 # Execute gemini CLI using positional argument (one-shot mode)
 # IMPORTANT: Use positional args, not -p to avoid interactive mode
 # Use timeout to prevent hanging
+set +e
 timeout $SHELL_TIMEOUT gemini "$FULL_PROMPT" -m "$MODEL" --output-format "$OUTPUT_FORMAT" 2>&1
 EXIT_CODE=$?
+set -e
 
 # Handle timeout and errors
 if [ $EXIT_CODE -eq 124 ]; then

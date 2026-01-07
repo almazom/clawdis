@@ -1,3 +1,4 @@
 #!/bin/bash
 # Wrapper for minimax_cli_web.js
-exec node /home/almaz/zoo_flow/clawdis/scripts/ai-wrappers/minimax_cli_web.js "$@"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+exec node "$SCRIPT_DIR/minimax_cli_web.js" "$@"

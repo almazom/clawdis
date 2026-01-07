@@ -7,10 +7,30 @@
  * This is similar to how web_search works - both use gemini CLI as a proxy.
  */
 
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const execAsync = promisify(exec);
+import { loadConfig } from "../config/config.js";
+
+const execFileAsync = promisify(execFile);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DEFAULT_WEB_FETCH_SCRIPT = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "scripts",
+  "web_fetch_with_gemini.sh",
+);
+
+function resolveWebFetchScriptPath(): string {
+  const cfg = loadConfig();
+  const configured = cfg.webSearch?.webFetchScriptPath?.trim();
+  return configured || DEFAULT_WEB_FETCH_SCRIPT;
+}
 
 export interface GeminiResponse {
   response: string;
@@ -42,19 +62,16 @@ export async function fetchViaWebReader(
 
   try {
     // Use gemini CLI to fetch the URL (similar to how web_search works)
-    const scriptPath = "/home/almaz/zoo_flow/clawdis/scripts/web_fetch_with_gemini.sh";
+    const scriptPath = resolveWebFetchScriptPath();
 
     const goalLabel = goal ? ` (goal: ${goal})` : "";
     console.log(`[webReader-adapter] Fetching via gemini: ${url}${goalLabel}`);
 
-    const goalArg = goal ? `--goal "${goal}" ` : "";
-    const { stdout, stderr } = await execAsync(
-      `"${scriptPath}" ${goalArg}"${url}"`,
-      {
-        timeout,
-        env: { ...process.env, PATH: process.env.PATH },
-      }
-    );
+    const args = goal ? ["--goal", goal, url] : [url];
+    const { stdout, stderr } = await execFileAsync(scriptPath, args, {
+      timeout,
+      env: { ...process.env, PATH: process.env.PATH },
+    });
 
     if (stderr) {
       console.error(`[webReader-adapter] stderr: ${stderr}`);

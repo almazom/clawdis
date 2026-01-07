@@ -1,5 +1,6 @@
 import { runExec } from "../process/exec.js";
 import { logVerbose } from "../globals.js";
+import { loadConfig } from "../config/config.js";
 
 export type AiClubReport = {
 
@@ -30,9 +31,9 @@ export async function getAiClubReport(period: "today" | "week"): Promise<{
 } | null> {
   const flag = period === "today" ? "--today" : "--week";
 
-
-
-  const cmdPath = "/home/almaz/bin/ai_club";
+  const cfg = loadConfig();
+  const cmdPath = cfg.aiClub?.cliPath?.trim() || "ai_club";
+  const timeoutMs = cfg.aiClub?.timeoutMs ?? 300000;
 
 
 
@@ -48,7 +49,7 @@ export async function getAiClubReport(period: "today" | "week"): Promise<{
 
 
 
-    const { stdout, stderr } = await runExec(cmdPath, [flag], { timeoutMs: 300000 }); // 5 min timeout
+    const { stdout, stderr } = await runExec(cmdPath, [flag], { timeoutMs });
 
 
 
@@ -277,7 +278,6 @@ export async function getAiClubReport(period: "today" | "week"): Promise<{
 
 
 }
-
 
 
 

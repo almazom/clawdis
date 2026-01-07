@@ -1,3 +1,4 @@
 #!/bin/bash
 # Wrapper for glm_cli_web.js
-exec node /home/almaz/zoo_flow/clawdis/scripts/ai-wrappers/glm_cli_web.js "$@"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+exec node "$SCRIPT_DIR/glm_cli_web.js" "$@"

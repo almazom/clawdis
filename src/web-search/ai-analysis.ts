@@ -4,9 +4,23 @@
  */
 
 import { promisify } from 'node:util';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const execAsync = promisify(exec);
+import { loadConfig } from '../config/config.js';
+
+const execFileAsync = promisify(execFile);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DEFAULT_WRAPPER_DIR = path.resolve(__dirname, '..', '..', 'scripts', 'ai-wrappers');
+
+function resolveWrapperDir(): string {
+  const cfg = loadConfig();
+  const configured = cfg.webSearch?.wrapperDir?.trim();
+  return configured || DEFAULT_WRAPPER_DIR;
+}
 
 export interface AIAnalysis {
   summary: string;
@@ -58,10 +72,10 @@ ${responses}
 Ответь ТОЛЬКО анализом, без предисловий.`;
 
   try {
-    const wrapperPath = '/home/almaz/zoo_flow/clawdis/scripts/ai-wrappers/kimi_cli_web';
-    const { stdout } = await execAsync(`"${wrapperPath}" ${JSON.stringify(prompt)}`, {
+    const wrapperDir = resolveWrapperDir();
+    const wrapperPath = path.resolve(wrapperDir, 'kimi_cli_web');
+    const { stdout } = await execFileAsync(wrapperPath, [prompt], {
       timeout: 90000,
-      env: { ...process.env, PATH: process.env.PATH },
     });
 
     return parseAIResponse(stdout);

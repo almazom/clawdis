@@ -1,5 +1,5 @@
 #!/bin/bash
-# parallel_web_search.sh - Run all 5 web search wrappers in parallel
+# parallel_web_search.sh - Run all 4 web search wrappers in parallel
 # Returns FIRST successful result (fastest wins)
 # Usage: parallel_web_search.sh "your query"
 
@@ -13,7 +13,7 @@ fi
 
 echo "=== Parallel Web Search ===" >&2
 echo "Query: $QUERY" >&2
-echo "Running 5 agents in parallel..." >&2
+echo "Running 4 agents in parallel..." >&2
 echo "" >&2
 
 run_wrapper() {
@@ -34,7 +34,7 @@ run_wrapper() {
   return 1
 }
 
-# Run all 5 in parallel, return first success
+# Run all 4 in parallel, return first success
 (
   run_wrapper "gemini" "$WRAPPER_DIR/gemini_cli_web"
 ) &
@@ -46,24 +46,19 @@ PID1=$!
 PID2=$!
 
 (
-  run_wrapper "qwen" "$WRAPPER_DIR/qwen_cli_web"
+  run_wrapper "minimax" "$WRAPPER_DIR/minimax_cli_web"
 ) &
 PID3=$!
 
 (
-  run_wrapper "minimax" "$WRAPPER_DIR/minimax_cli_web"
-) &
-PID4=$!
-
-(
   run_wrapper "glm" "$WRAPPER_DIR/glm_cli_web"
 ) &
-PID5=$!
+PID4=$!
 
 # Wait for first success
 winner=""
 while [ -z "$winner" ]; do
-  for pid in $PID1 $PID2 $PID3 $PID4 $PID5; do
+  for pid in $PID1 $PID2 $PID3 $PID4; do
     if ! kill -0 $pid 2>/dev/null; then
       # Process finished
       wait $pid 2>/dev/null
@@ -79,7 +74,7 @@ while [ -z "$winner" ]; do
 done
 
 # Kill all others
-for pid in $PID1 $PID2 $PID3 $PID4 $PID5; do
+for pid in $PID1 $PID2 $PID3 $PID4; do
   kill $pid 2>/dev/null
   wait $pid 2>/dev/null
 done

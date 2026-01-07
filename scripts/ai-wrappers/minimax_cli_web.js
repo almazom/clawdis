@@ -2,11 +2,10 @@
 // minimax_cli_web - MiniMax Claude web search wrapper
 // Usage: minimax_cli_web "your query"
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
-import { join } from 'path';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -57,6 +56,11 @@ const TIMEOUT_MS = parseInt(process.env.WEB_SEARCH_TIMEOUT_MS || '180000');
 const TIMEOUT_SECONDS = Math.max(60, Math.floor(TIMEOUT_MS / 1000));
 
 // Set environment
+const nodeBinPrefix = process.env.CLAWDIS_NODE_BIN_PATH?.trim();
+const pathEnv = nodeBinPrefix
+  ? `${nodeBinPrefix}:${process.env.PATH ?? ""}`
+  : (process.env.PATH ?? "");
+
 const env = {
   ...process.env,
   ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic",
@@ -69,31 +73,50 @@ const env = {
   HTTP_PROXY: "",
   HTTPS_PROXY: "",
   NO_PROXY: "*",
-  PATH: `/home/almaz/.local/share/fnm/node-versions/v22.21.1/installation/bin:${process.env.PATH}`
+  PATH: pathEnv,
 };
 
 try {
-  const result = execSync(
-    `claude -p "use builtin tools, web_search, web_fetch, for looking for: ${QUERY} [ANSWER in Russian]" --dangerously-skip-permissions --output-format json 2>&1`,
+  const prompt = `use builtin tools, web_search, web_fetch, for looking for: ${QUERY} [ANSWER in Russian]`;
+  const claudeBinary = process.env.CLAUDE_CLI_PATH || "claude";
+  const result = spawnSync(
+    claudeBinary,
+    ["-p", prompt, "--dangerously-skip-permissions", "--output-format", "json"],
     {
       timeout: TIMEOUT_SECONDS * 1000,
-      env: env,
+      env,
       maxBuffer: 50 * 1024 * 1024,
-      shell: '/bin/bash'
-    }
+    },
   );
-  
-  console.log(result.toString());
-} catch (err) {
-  if (err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
-    console.log(`{"error": "MiniMax timeout (${TIMEOUT_SECONDS}s)"}`);
+
+  const stdout = result.stdout ? result.stdout.toString() : "";
+  const stderr = result.stderr ? result.stderr.toString() : "";
+  const output = `${stdout}${stderr}`;
+
+  if (result.error) {
+    if (result.error.code === 'ETIMEDOUT' || result.signal === 'SIGTERM') {
+      console.log(`{"error": "MiniMax timeout (${TIMEOUT_SECONDS}s)"}`);
+      process.exit(1);
+    }
+    if (output) {
+      console.log(output);
+    } else {
+      console.log(`{"error": "MiniMax failed: ${result.error.message}"}`);
+    }
     process.exit(1);
   }
-  
-  if (err.stdout) {
-    console.log(err.stdout.toString());
-  } else {
-    console.log(`{"error": "MiniMax failed: ${err.message}"}`);
+
+  if (result.status && result.status !== 0) {
+    if (output) {
+      console.log(output);
+    } else {
+      console.log(`{"error": "MiniMax failed with status ${result.status}"}`);
+    }
+    process.exit(result.status);
   }
-  process.exit(err.status || 1);
+
+  console.log(output);
+} catch (err) {
+  console.log(`{"error": "MiniMax failed: ${err instanceof Error ? err.message : String(err)}"}`);
+  process.exit(1);
 }
