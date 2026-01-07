@@ -10,7 +10,12 @@
 import { describe, expect, it } from "vitest";
 import { fetchViaWebReader } from "./webReader-adapter.js";
 
-describe("webReader-adapter: TDD for web_fetch fix", () => {
+const runE2E = ['1', 'true', 'yes'].includes(
+  (process.env.RUN_E2E ?? '').toLowerCase(),
+);
+const describeE2E = runE2E ? describe : describe.skip;
+
+describeE2E("webReader-adapter: TDD for web_fetch fix", () => {
   describe("Phase 1: Demonstrate network isolation", () => {
     it("should fail with direct Node.js fetch (baseline)", async () => {
       // This demonstrates the problem - direct fetch fails
