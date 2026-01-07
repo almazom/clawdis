@@ -1,31 +1,3 @@
 #!/bin/bash
-# glm_cli_web - GLM (Z.AI) Claude web search wrapper
-# Usage: glm_cli_web "your query"
-
-# Load environment from project root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-source "$SCRIPT_DIR/../../.env"
-
-QUERY="$1"
-TIMEOUT="${2:-${WEB_SEARCH_TIMEOUT_SECONDS:-120}}"
-
-if [ -z "$QUERY" ]; then
-  echo '{"error": "No query provided"}'
-  exit 1
-fi
-
-export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_ZAI_MODEL:-glm-4.7}"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_ZAI_MODEL:-glm-4.7}"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_ZAI_MODEL:-glm-4.7}"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_ZAI_MODEL:-glm-4.7}"
-export ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
-export ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_ZAI_API_KEY:-}"
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-
-if [ -z "$ANTHROPIC_AUTH_TOKEN" ]; then
-  echo '{"error": "ANTHROPIC_ZAI_API_KEY not set"}'
-  exit 1
-fi
-
-claude -p "use builtin tools, web_search, web_fetch, for looking for: $QUERY [ANSWER in Russian]" \
-  --dangerously-skip-permissions --output-format json 2>&1
+# Wrapper for glm_cli_web.js
+exec node /home/almaz/zoo_flow/clawdis/scripts/ai-wrappers/glm_cli_web.js "$@"
