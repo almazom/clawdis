@@ -8,8 +8,10 @@ set -euo pipefail
 # Debug: log that script started
 echo "SCRIPT_START: $(date)" >> /tmp/web_fetch_debug.log
 
-# Ensure fnm/node PATH is available
-export PATH="/home/almaz/.local/share/fnm/node-versions/v22.21.1/installation/bin:$PATH"
+# Ensure node PATH is available if configured
+if [[ -n "${CLAWDIS_NODE_BIN_PATH:-}" ]]; then
+  export PATH="${CLAWDIS_NODE_BIN_PATH}:$PATH"
+fi
 
 MODEL="${WEB_FETCH_GEMINI_MODEL:-gemini-3-flash-preview}"
 TIMEOUT="${WEB_FETCH_TIMEOUT_SECONDS:-110}"
@@ -86,8 +88,10 @@ $OUTPUT_BLOCKS
 # Execute gemini CLI
 # Capture stdout only - discard stderr to avoid JSON parse issues
 # Also capture exit code
+set +e
 OUTPUT=$(timeout "$TIMEOUT" gemini "$PROMPT" -m "$MODEL" --output-format json 2>/dev/null)
 EXIT_CODE=$?
+set -e
 
 # Debug: write to temp file for troubleshooting
 echo "EXIT_CODE=$EXIT_CODE" > /tmp/web_fetch_debug.log
@@ -108,8 +112,35 @@ fi
 
 # Check if output contains valid JSON
 if [[ ! "$OUTPUT" =~ ^\{ ]]; then
-    # Maybe gemini returned text before JSON, try to extract JSON
-    JSON_PART=$(echo "$OUTPUT" | grep -o '{' | tail -1 | sed 's/^/[/;s/$/]/')
+    # Maybe gemini returned text before JSON, try to extract JSON block
+    JSON_PART=$(printf '%s' "$OUTPUT" | awk '
+      BEGIN { found = 0; json = "" }
+      {
+        if (!found) {
+          pos = index($0, "{");
+          if (pos > 0) {
+            found = 1;
+            json = substr($0, pos);
+          }
+        } else {
+          json = json "\n" $0;
+        }
+      }
+      END {
+        if (!found) {
+          exit 0;
+        }
+        last = -1;
+        for (i = length(json); i >= 1; i--) {
+          if (substr(json, i, 1) == "}") {
+            last = i;
+            break;
+          }
+        }
+        if (last > 0) {
+          print substr(json, 1, last);
+        }
+      }')
     if [[ -n "$JSON_PART" ]]; then
         OUTPUT="$JSON_PART"
     fi
