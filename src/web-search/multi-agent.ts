@@ -4,15 +4,27 @@
  * Shows agent attribution in Telegram responses
  */
 
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { exec } from 'node:child_process';
-
-const execAsync = promisify(exec);
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Import AI analysis
 import { analyzeWithAI, type AIAnalysis } from './ai-analysis.js';
 import { formatTelegramMessage } from '../telegram/formatter.js';
+import { loadConfig } from '../config/config.js';
+
+const execFileAsync = promisify(execFile);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DEFAULT_WRAPPER_DIR = path.resolve(__dirname, '..', '..', 'scripts', 'ai-wrappers');
+
+function resolveWrapperDir(): string {
+  const cfg = loadConfig();
+  const configured = cfg.webSearch?.wrapperDir?.trim();
+  return configured || DEFAULT_WRAPPER_DIR;
+}
 
 export interface AgentResult {
   agent: string;
@@ -64,13 +76,14 @@ export async function executeMultiAgentWebSearch(
   const startTime = Date.now();
   const results: AgentResult[] = [];
   let firstResultSent = false;
+  const wrapperDir = resolveWrapperDir();
 
   onStatus?.(`🥊 Starting AI Fight: "${query}"`);
   onStatus?.(`⚔️  Launching ${AGENTS.length} AI agents in parallel...`);
 
   // Spawn all agents in parallel
   const agentPromises = AGENTS.map(async (agent) => {
-    const result = await runAgent(agent, query, onStatus);
+    const result = await runAgent(agent, query, onStatus, wrapperDir);
     results.push(result);
 
     // 🚀 IMMEDIATELY send FIRST successful result to user (fire and forget)
@@ -129,15 +142,16 @@ export async function executeMultiAgentWebSearch(
 async function runAgent(
   agent: typeof AGENTS[0],
   query: string,
-  onStatus?: (status: string) => void
+  onStatus: ((status: string) => void) | undefined,
+  wrapperDir: string
 ): Promise<AgentResult> {
   const startTime = Date.now();
 
   onStatus?.(`${agent.emoji} ${agent.display} is searching...`);
 
   try {
-    const wrapperPath = `/home/almaz/zoo_flow/clawdis/scripts/ai-wrappers/${agent.script}`;
-    const { stdout, stderr } = await execAsync(`"${wrapperPath}" "${query}"`, {
+    const wrapperPath = path.resolve(wrapperDir, agent.script);
+    const { stdout, stderr } = await execFileAsync(wrapperPath, [query], {
       timeout: 180000,  // 3 minutes
     });
 
@@ -274,6 +288,9 @@ function generateHtmlReport(
       .replace(/\n/g, '<br>');
   };
 
+  const escapeHtmlTitle = (text: string): string =>
+    escapeHtml(text).replace(/<br>/g, ' ');
+
   // Helper to convert basic markdown to HTML
   const markdownToHtml = (text: string): string => {
     return text
@@ -357,7 +374,7 @@ function generateHtmlReport(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${query.substring(0, 60)}</title>
+  <title>${escapeHtmlTitle(query.substring(0, 60))}</title>
   <meta name="robots" content="noindex, nofollow">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
