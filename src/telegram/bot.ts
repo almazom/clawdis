@@ -1,5 +1,12 @@
 // @ts-nocheck
 import { Buffer } from "node:buffer";
+import { exec } from "node:child_process";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import type { ApiClientOptions, Context, Message } from "grammy";
@@ -40,6 +47,7 @@ import { startLivenessProbe, type LivenessProbeOptions } from "./liveness-probe.
 import { messages as webSearchMessages } from "../web-search/messages.js";
 import { executeWebSearch } from "../web-search/executor.js";
 import { executeMultiAgentWebSearch, formatTelegramWithAgent } from "../web-search/multi-agent.js";
+import { getAiClubReport } from "../commands/ai-club.js";
 import {
   createTTSButton,
   createTTSProgressButton,
@@ -52,6 +60,7 @@ import { formatTelegramMessage } from "./formatter.js";
 
 const PARSE_ERR_RE =
   /can't parse entities|parse entities|find end of the entity/i;
+const MESSAGE_NOT_MODIFIED_RE = /message is not modified/i;
 const deepResearchInFlight = new Set<number>();
 const webSearchInFlight = new Set<number>();
 
@@ -140,20 +149,27 @@ export function createTelegramBot(opts: TelegramBotOptions) {
         msg.chat.type === "group" || msg.chat.type === "supergroup";
 
       // Instant acknowledgment at the very beginning
-      try {
-        let initialAck = "🤔 Думаю...";
-        if (msg.photo) initialAck = "📸 Вижу фото, сейчас посмотрю...";
-        else if (msg.video) initialAck = "🎥 Вижу видео, сейчас изучу...";
-        else if (msg.voice || msg.audio) initialAck = "🎙️ Слушаю аудио...";
-        else if (msg.document) initialAck = "📂 Вижу файл, сейчас проверю...";
-        
-        const status = await ctx.reply(initialAck);
-        progressStatus = {
-          chatId: ctx.chat?.id ?? chatId,
-          messageId: status.message_id,
-        };
-      } catch (err) {
-        logVerbose(`telegram initial ack failed: ${String(err)}`);
+      // Skip for /web commands - they have their own status message
+      const rawText = (msg.text ?? msg.caption ?? "").trim();
+      const isWebCommand = /^\/web(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
+      const isAiClubCommand = /^\/ai_(day|daily|week)(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
+
+      if (!isWebCommand && !isAiClubCommand) {
+        try {
+          let initialAck = "🤔 Думаю...";
+          if (msg.photo) initialAck = "📸 Вижу фото, сейчас посмотрю...";
+          else if (msg.video) initialAck = "🎥 Вижу видео, сейчас изучу...";
+          else if (msg.voice || msg.audio) initialAck = "🎙️ Слушаю аудио...";
+          else if (msg.document) initialAck = "📂 Вижу файл, сейчас проверю...";
+
+          const status = await ctx.reply(initialAck);
+          progressStatus = {
+            chatId: ctx.chat?.id ?? chatId,
+            messageId: status.message_id,
+          };
+        } catch (err) {
+          logVerbose(`telegram initial ack failed: ${String(err)}`);
+        }
       }
 
       const sendTyping = async () => {
@@ -270,6 +286,13 @@ export function createTelegramBot(opts: TelegramBotOptions) {
         return;
       }
 
+      // Check for /ai_day or /ai_week command
+      const aiClubCommand = parseAiClubCommand(messageText, botUsername);
+      if (aiClubCommand) {
+        await runAiClubAnalysis(ctx, chatId, aiClubCommand.period, logger, progressStatus);
+        return;
+      }
+
       // Only use automatic LLM-based categorization if enabled in config
       if (
         cfg.telegram?.autoCategorize &&
@@ -352,6 +375,16 @@ export function createTelegramBot(opts: TelegramBotOptions) {
         );
       }
 
+      const geminiMarker = "Источник: Gemini CLI";
+      let usedGeminiCli = false;
+
+      const appendGeminiMarker = (payload: ReplyPayload): ReplyPayload => {
+        if (!usedGeminiCli || !payload.text) return payload;
+        if (payload.text.includes(geminiMarker)) return payload;
+        const suffix = `\n\n${geminiMarker}`;
+        return { ...payload, text: `${payload.text}${suffix}` };
+      };
+
       const replyResult = await getReplyFromConfig(
         ctxPayload,
         {
@@ -359,17 +392,25 @@ export function createTelegramBot(opts: TelegramBotOptions) {
           waitForFinalReply: true, // Wait for final reply instead of streaming
           // Tool streaming enabled - shows "Using tool: X..." messages
           onToolStart: async ({ name }) => {
+            if (name === "web_search" || name === "web_fetch") {
+              usedGeminiCli = true;
+            }
             if (progressStatus) {
+              const displayName =
+                name === "web_search" || name === "web_fetch"
+                  ? `${name} (Gemini CLI)`
+                  : name;
               await editTelegramMessage(
                 bot.api,
                 progressStatus,
-                formatTelegramMessage(`○ Инструмент: *${name}*...`),
+                formatTelegramMessage(`○ Инструмент: *${displayName}*...`),
               );
             }
           },
           onToolResult: async (payload) => {
+            const markedPayload = appendGeminiMarker(payload);
             await deliverReplies({
-              replies: [payload],
+              replies: [markedPayload],
               chatId: String(chatId),
               token: opts.token,
               runtime,
@@ -383,8 +424,8 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       );
       const replies = replyResult
         ? Array.isArray(replyResult)
-          ? replyResult
-          : [replyResult]
+          ? replyResult.map(appendGeminiMarker)
+          : [appendGeminiMarker(replyResult)]
         : [];
       if (replies.length === 0) return;
 
@@ -643,6 +684,168 @@ function parseWebCommand(
   return { query: (match[2] ?? "").trim() };
 }
 
+function parseAiClubCommand(
+  messageText: string,
+  botUsername?: string,
+): { period: "today" | "week" } | null {
+  const trimmed = messageText.trim();
+  const match = /^\/ai_(day|daily|week)(?:@([a-z0-9_]+))?$/i.exec(trimmed);
+  if (!match) return null;
+  const cmd = match[1].toLowerCase();
+  const period = (cmd === "day" || cmd === "daily") ? "today" : "week";
+  const mentioned = match[2];
+  if (mentioned && botUsername && mentioned.toLowerCase() !== botUsername) {
+    return null;
+  }
+  return { period: period as "today" | "week" };
+}
+
+async function runAiClubAnalysis(
+  ctx: Context,
+  chatId: number,
+  period: "today" | "week",
+  logger: ReturnType<typeof getChildLogger>,
+  statusMessage?: StatusMessage | null,
+): Promise<void> {
+  const pipelineStartTime = Date.now();
+  const pipelineLog = (step: number | string, emoji: string, message: string) => {
+    const timestamp = new Date().toISOString().slice(11, 23);
+    const elapsed = Date.now() - pipelineStartTime;
+    const elapsedStr = elapsed < 1000 ? `+${elapsed}ms` : `+${(elapsed / 1000).toFixed(1)}s`;
+    console.log(`[ai-club] ${timestamp} │ ${elapsedStr.padStart(8)} │ ${emoji} STEP ${step} │ ${message}`);
+  };
+
+  pipelineLog(1, "📥", `Received /ai_${period === "today" ? "day" : "week"} command`);
+
+  let statusChatId: number | undefined = statusMessage?.chatId;
+  let statusMessageId: number | undefined = statusMessage?.messageId;
+
+  try {
+    if (!statusMessageId) {
+      const statusMsg = await ctx.reply("⚙️ Запускаю аналитику AI Club...");
+      statusChatId = ctx.chat?.id;
+      statusMessageId = statusMsg.message_id;
+    } else {
+      await editTelegramMessage(ctx.api, { chatId: statusChatId!, messageId: statusMessageId }, "⚙️ Собираю данные...");
+    }
+
+    pipelineLog(2, "🔍", `Fetching ${period} report from AI Club...`);
+    const report = await getAiClubReport(period);
+
+    if (!report) {
+      pipelineLog(3, "❌", "Failed to get report from ai_club CLI");
+      const errorMsg = "✂︎ Не удалось получить отчёт от AI Club. Проверьте логи.";
+      await editTelegramMessage(ctx.api, { chatId: statusChatId!, messageId: statusMessageId }, errorMsg);
+      return;
+    }
+
+    pipelineLog(4, "📝", "Processing simplified report summary...");
+    
+    // Extract only topics from the summary
+    const lines = report.summary.split('\n');
+    const topics: string[] = [];
+    let inTopics = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.includes('Ключевые темы')) {
+        inTopics = true;
+        continue;
+      }
+      if (inTopics) {
+        if (trimmed.startsWith('*') || trimmed.startsWith('•') || trimmed.startsWith('-')) {
+          topics.push(trimmed);
+        } else if (trimmed === '' && topics.length > 0) {
+          break;
+        } else if (trimmed.startsWith('####') || (trimmed.startsWith('**') && !trimmed.includes(':'))) {
+          break;
+        }
+      }
+    }
+
+    const periodLabel = period === "today" ? "Ежедневный" : "Еженедельный";
+    const emoji = period === "today" ? "☀️" : "📅";
+    
+    let resultMessage = `${emoji} *${periodLabel} отчёт AI Club*\n`;
+    resultMessage += `📢 Канал: ${report.channel || "@aiclubsweggs"}\n\n`;
+    
+    if (topics.length > 0) {
+      resultMessage += `*Ключевые темы:*\n${topics.join('\n')}\n\n`;
+    } else {
+      resultMessage += `_Темы не найдены\._\n\n`;
+    }
+    
+    resultMessage += `🔗 [Полный отчёт](${report.url})`;
+
+    pipelineLog(5, "📤", "Sending simplified summary to Telegram...");
+    await editTelegramMessage(ctx.api, { chatId: statusChatId!, messageId: statusMessageId }, resultMessage);
+    pipelineLog(6, "✅", "Report delivered successfully!");
+
+  } catch (error) {
+    pipelineLog(99, "💥", `Pipeline FAILED: ${error instanceof Error ? error.message : String(error)}`);
+    const errorText = error instanceof Error ? error.message : String(error);
+    if (statusChatId && statusMessageId) {
+      await editTelegramMessage(ctx.api, { chatId: statusChatId, messageId: statusMessageId }, `❌ Ошибка: ${errorText}`);
+    }
+  }
+}
+
+// Telegram max message length
+const TELEGRAM_MAX_LENGTH = 4000;
+
+/**
+ * Publish content using publish_me CLI and return URL
+ * Returns null if publishing fails
+ */
+async function publishContent(
+  content: string,
+  slug: string,
+  isHtml = false,
+): Promise<string | null> {
+  const timestamp = new Date().toISOString().slice(11, 23);
+  const log = (msg: string) => console.log(`[publish] ${timestamp} │ ${msg}`);
+
+  try {
+    // Write content to temp file
+    const ext = isHtml ? '.html' : '.md';
+    const tempFile = join(tmpdir(), `clawdis-${Date.now()}${ext}`);
+    await writeFile(tempFile, content, 'utf-8');
+    log(`Created temp file: ${tempFile}`);
+
+    // Call publish_me CLI
+    const args = isHtml ? '--direct' : '';
+    const cmd = `publish_me ${args} --slug "${slug}" "${tempFile}"`;
+    log(`Running: ${cmd}`);
+
+    const { stdout } = await execAsync(cmd, { timeout: 30000 });
+
+    // Clean up temp file
+    await unlink(tempFile).catch(() => {});
+
+    // Parse JSON output to get URL
+    try {
+      const result = JSON.parse(stdout);
+      if (result.url) {
+        log(`Published to: ${result.url}`);
+        return result.url;
+      }
+    } catch {
+      // Try to extract URL from output
+      const urlMatch = stdout.match(/https?:\/\/[^\s"]+/);
+      if (urlMatch) {
+        log(`Published to: ${urlMatch[0]}`);
+        return urlMatch[0];
+      }
+    }
+
+    log('Failed to extract URL from publish_me output');
+    return null;
+  } catch (error) {
+    log(`Publish failed: ${error}`);
+    return null;
+  }
+}
+
 async function runWebSearch(
   ctx: Context,
   chatId: number,
@@ -650,91 +853,256 @@ async function runWebSearch(
   logger: ReturnType<typeof getChildLogger>,
   statusMessage?: StatusMessage | null,
 ): Promise<void> {
+  const pipelineStartTime = Date.now();
+
+  // URL detection helper
+  const isUrl = (text: string): boolean => {
+    const urlPattern = /^(https?:\/\/|www\.)[^\s<>"{}|\\^`\[\]]+$/i;
+    return urlPattern.test(text.trim());
+  };
+
+  const pipelineLog = (step: number | string, emoji: string, message: string) => {
+    const timestamp = new Date().toISOString().slice(11, 23);
+    const elapsed = Date.now() - pipelineStartTime;
+    const elapsedStr = elapsed < 1000
+      ? `+${elapsed}ms`
+      : `+${(elapsed / 1000).toFixed(1)}s`;
+    const paddedElapsed = elapsedStr.padStart(8);
+    console.log(`[web-search] ${timestamp} │ ${paddedElapsed} │ ${emoji} STEP ${step} │ ${message}`);
+  };
+
+  // Detect if input is a URL
+  if (isUrl(query)) {
+    pipelineLog(0.5, "🔗", `URL detected: "${query}"`);
+    // Convert URL to a summarize query for the AI agents
+    query = `Проанализируй и расскажи主要内容 этой веб-страницы: ${query}`;
+    pipelineLog(0.5, "🔄", `Converted to search query: "${query.slice(0, 50)}..."`);
+  }
+
+  pipelineLog(1, "📥", `Received /web command: "${query.slice(0, 50)}${query.length > 50 ? '...' : ''}"`);
+
   // Check if already searching for this chat
   if (webSearchInFlight.has(chatId)) {
+    pipelineLog(1, "⏸️", `Search already in-flight for chat ${chatId}, skipping`);
     await ctx.reply("🔍 Поиск уже выполняется для этого чата. Пожалуйста, подождите.");
     return;
   }
 
   // Mark as in-flight
   webSearchInFlight.add(chatId);
+  pipelineLog(2, "🔒", `Marked chat ${chatId} as in-flight`);
 
   let statusChatId: number | undefined = statusMessage?.chatId;
   let statusMessageId: number | undefined = statusMessage?.messageId;
 
   try {
-    // Send initial status message
-    if (statusChatId && statusMessageId) {
-      await editTelegramMessage(
-        ctx.api,
-        { chatId: statusChatId, messageId: statusMessageId },
-        "🥊 Запускаю AI бой...",
-      );
-    } else {
-      const sent = await ctx.reply("🥊 Запускаю AI бой...");
-      statusChatId = ctx.chat?.id;
-      statusMessageId = sent.message_id;
-    }
+    // Send initial status message (DO NOT EDIT - send new message)
+    pipelineLog(3, "💬", "Sending initial status message to Telegram");
+    const statusMsg = await ctx.reply("🥊 Запускаю AI бой...");
+    statusChatId = ctx.chat?.id;
+    statusMessageId = statusMsg.message_id;
+    pipelineLog(3, "✅", `Status message sent (msgId: ${statusMessageId})`);
 
     if (!statusChatId || !statusMessageId) {
       throw new Error("Failed to get message ID for status update");
     }
 
-    // Execute multi-agent search
-    const result = await executeMultiAgentWebSearch(query, (status) => {
-      logVerbose(`[MULTI-AGENT] ${status}`);
+    // Execute multi-agent search with IMMEDIATE first result delivery
+    pipelineLog(4, "🥊", "Starting multi-agent AI search...");
+    let firstResultSent = false;
+
+    const result = await executeMultiAgentWebSearch(query, {
+      onStatus: (status) => {
+        // Forward agent status to pipeline log with proper step mapping
+        const stepInfo = status.includes("Starting AI Fight") ? { step: "4.1", emoji: "🥊" } :
+                         status.includes("Launching") ? { step: "4.2", emoji: "⚔️" } :
+                         status.includes("is searching") ? { step: "4.3", emoji: "🔍" } :
+                         status.includes("done in") ? { step: "4.4", emoji: "✅" } :
+                         status.includes("failed") ? { step: "4.5", emoji: "❌" } :
+                         status.includes("First result ready") ? { step: "4.6", emoji: "🚀" } :
+                         status.includes("Grace period") ? { step: "4.7", emoji: "⏱️" } :
+                         status.includes("Got") && status.includes("results") ? { step: "4.8", emoji: "📊" } :
+                         status.includes("Single agent") ? { step: "4.9", emoji: "📝" } :
+                         status.includes("analysis") ? { step: "5.0", emoji: "🤖" } :
+                         { step: "4.x", emoji: "🔄" };
+        console.log(`[web-search] ${new Date().toISOString().slice(11, 23)} │ ${stepInfo.emoji} STEP ${stepInfo.step} │ ${status}`);
+      },
+
+      // FAST PATH: Send first result to Telegram IMMEDIATELY
+      onFirstResult: async (firstResult) => {
+        firstResultSent = true;
+
+        // Step 5.1: Winner detected
+        pipelineLog(5.1, "🏆", `WINNER DETECTED: ${firstResult.agentDisplay}`);
+        pipelineLog(5.1, "⏱️", `Response time: ${firstResult.durationMs}ms`);
+        pipelineLog(5.1, "⭐", `Quality rating: ${'⭐'.repeat(firstResult.quality || 0)} (${firstResult.quality}/5)`);
+
+        // Step 5.2: Prepare message
+        const stars = '⭐'.repeat(firstResult.quality || 0);
+        const responsePreview = (firstResult.response || '').substring(0, 2000);
+        const queryPreview = query.substring(0, 50) + (query.length > 50 ? '...' : '');
+        pipelineLog(5.2, "📝", `Preparing message: ${responsePreview.length} chars`);
+
+        const fastMessage = `🌐 *${firstResult.agentDisplay}* ${stars}
+
+${responsePreview}${responsePreview.length >= 2000 ? '...' : ''}
+
+---
+_Время: ${firstResult.durationMs}мс | "${queryPreview}"_`;
+
+        // Step 5.3: Format for Telegram
+        pipelineLog(5.3, "🔧", `Formatting MarkdownV2 for Telegram...`);
+        const formattedMessage = formatTelegramMessage(fastMessage);
+        pipelineLog(5.3, "📏", `Formatted message: ${formattedMessage.length} chars`);
+
+        // Step 5.4: Send to Telegram
+        pipelineLog(5.4, "📤", `SENDING TO TELEGRAM → chat ${chatId}...`);
+        try {
+          const sentMsg = await ctx.reply(formattedMessage, { parse_mode: "MarkdownV2" });
+          pipelineLog(5.5, "✅", `🎉 SUCCESS! Message delivered (msgId: ${sentMsg.message_id})`);
+          pipelineLog(5.5, "👀", `USER NOW SEES: ${firstResult.agentDisplay} result in Telegram`);
+
+          // 🧹 Delete the status message "🥊 Запускаю AI бой..." now that we have a result
+          if (statusChatId && statusMessageId) {
+            try {
+              await ctx.api.deleteMessage(statusChatId, statusMessageId);
+              pipelineLog(5.6, "🗑️", `Deleted status message (msgId: ${statusMessageId})`);
+            } catch (delErr) {
+              pipelineLog(5.6, "⚠️", `Could not delete status message: ${delErr}`);
+            }
+          }
+        } catch (sendError) {
+          pipelineLog(5.4, "⚠️", `MarkdownV2 failed: ${sendError}`);
+          pipelineLog(5.4, "🔄", `Trying plain text fallback...`);
+          // Fallback: plain text
+          const plainMsg = await ctx.reply(fastMessage.replace(/[*_\[\]()~`>#+=|{}.!\\-]/g, ''));
+          pipelineLog(5.5, "✅", `Plain text sent (msgId: ${plainMsg.message_id})`);
+          pipelineLog(5.5, "👀", `USER NOW SEES: ${firstResult.agentDisplay} result (plain)`);
+
+          // 🧹 Delete the status message even on fallback
+          if (statusChatId && statusMessageId) {
+            try {
+              await ctx.api.deleteMessage(statusChatId, statusMessageId);
+              pipelineLog(5.6, "🗑️", `Deleted status message (msgId: ${statusMessageId})`);
+            } catch (delErr) {
+              pipelineLog(5.6, "⚠️", `Could not delete status message: ${delErr}`);
+            }
+          }
+        }
+      },
     });
 
-    if (result.winner) {
-      // Format and send first success response
-      const message = formatTelegramWithAgent(result);
-      await ctx.api.editMessageText(
-        statusChatId,
-        statusMessageId,
-        message,
-        { parse_mode: "MarkdownV2" }
-      );
+    pipelineLog(6, "📊", `Multi-agent search complete: ${result.agents.filter(a => a.success).length}/${result.agents.length} agents succeeded`);
 
-      // Send HTML report via publish_me after all complete
-      if (result.htmlReport) {
-        // Give user time to read first response, then send report
-        setTimeout(async () => {
-          try {
-            await ctx.reply(`/publish_me ${result.htmlReport}`);
-          } catch (error) {
-            logger.error({ chatId, error }, "Failed to send HTML report");
-          }
-        }, 1000);
+    // If first result was already sent, publish HTML with ALL results
+    if (firstResultSent && result.winner) {
+      pipelineLog(7, "✅", `Winner was ${result.winner.agentDisplay} (already sent via fast path)`);
+
+      // 📤 PUBLISH HTML with ALL agents results
+      pipelineLog(7.1, "📄", `Publishing HTML report with all ${result.agents.length} agents...`);
+      const slug = `web-search-full-${Date.now()}`;
+      const contentToPublish = result.htmlReport || `# ${query}\n\n${JSON.stringify(result, null, 2)}`;
+      const publishedUrl = await publishContent(contentToPublish, slug, true);
+
+      if (publishedUrl) {
+        pipelineLog(7.2, "🔗", `Published: ${publishedUrl}`);
+
+        // Send link to user
+        const linkMessage = `📊 *Полный AI Анализ* (${result.agents.filter(a => a.success).length} агентов)
+
+🔗 [Открыть полный отчёт](${publishedUrl})
+
+_${result.winner.agentDisplay} выиграл гонку, но все агенты предоставили ценные инсайты!_`;
+
+        try {
+          await ctx.reply(formatTelegramMessage(linkMessage), { parse_mode: "MarkdownV2" });
+          pipelineLog(7.3, "✅", "Sent HTML link to user");
+        } catch {
+          // Link sending is optional
+        }
       }
+
+      // AI analysis summary removed - not valuable for user
+
+      pipelineLog(9, "🎉", "Pipeline completed successfully!");
+    } else if (result.winner && !firstResultSent) {
+      // Fallback: first result callback didn't fire (shouldn't happen)
+      pipelineLog(6, "🏆", `Winner: ${result.winner.agentDisplay} (${result.winner.durationMs}ms, quality: ${result.winner.quality})`);
+
+      // Format the message
+      pipelineLog(7, "📤", "Formatting winner response...");
+      const message = formatTelegramWithAgent(result);
+      const fullResponse = result.winner.response || '';
+      pipelineLog(7, "📝", `Message: ${message.length} chars, Full response: ${fullResponse.length} chars`);
+
+      // Check if response is too long for Telegram
+      if (fullResponse.length > TELEGRAM_MAX_LENGTH) {
+        pipelineLog(8, "📄", `Response too long (${fullResponse.length} > ${TELEGRAM_MAX_LENGTH}), publishing full version...`);
+
+        // Generate slug from query
+        const slug = `web-search-${Date.now()}`;
+
+        // Publish full response (or HTML report if available)
+        const contentToPublish = result.htmlReport || `# ${query}\n\n${fullResponse}`;
+        const isHtml = !!result.htmlReport;
+        const publishedUrl = await publishContent(contentToPublish, slug, isHtml);
+
+        // Create truncated message with link
+        const truncatedResponse = fullResponse.slice(0, 1500) + '...';
+        const stars = '⭐'.repeat(result.winner.quality || 0);
+        const linkPart = publishedUrl
+          ? `\n\n[📖 Читать полностью →](${publishedUrl})`
+          : '\n\n_(Полная версия недоступна)_';
+
+        const truncatedMessage = `🌐 *${result.winner.agentDisplay}* ${stars}\n\n${truncatedResponse}${linkPart}\n\n_Время: ${result.winner.durationMs}мс_`;
+
+        try {
+          await ctx.reply(formatTelegramMessage(truncatedMessage), { parse_mode: "MarkdownV2" });
+          pipelineLog(8, "✅", `Sent truncated message with link: ${publishedUrl || 'none'}`);
+        } catch (sendError) {
+          pipelineLog(8, "❌", `Failed to send truncated message: ${sendError}`);
+          // Fallback: send plain text
+          await ctx.reply(truncatedMessage.replace(/[*_\[\]()~`>#+=|{}.!\\-]/g, ''));
+        }
+      } else {
+        // Message fits, send normally
+        try {
+          await ctx.reply(message, { parse_mode: "MarkdownV2" });
+          pipelineLog(7, "✅", "Winner response sent successfully");
+        } catch (sendError) {
+          pipelineLog(7, "❌", `Failed to send formatted message: ${sendError}`);
+          throw sendError;
+        }
+      }
+
+      pipelineLog(9, "🎉", "Pipeline completed successfully!");
     } else {
-      // All agents failed
+      pipelineLog(6, "❌", "No winner - all agents failed");
+      // All agents failed - send error as NEW message
       const errorDetails = result.agents
         .filter(a => !a.success)
         .map(a => `${a.agentDisplay}: ${a.error}`)
         .join('\n');
 
+      pipelineLog(7, "📤", "Sending error message to Telegram...");
       const errorMessage = `❌ Все AI агенты не ответили.\n\nВозможные причины:\n- Проверьте API ключи в .env\n- Проверьте подключение к интернету\n\n${errorDetails}`;
 
-      await ctx.api.editMessageText(
-        statusChatId,
-        statusMessageId,
-        errorMessage,
-      );
+      await ctx.reply(errorMessage);
+      pipelineLog(7, "✅", "Error message sent");
     }
   } catch (error) {
+    pipelineLog(99, "💥", `Pipeline FAILED: ${error instanceof Error ? error.message : String(error)}`);
     logger.error({ chatId, error }, "Web search execution failed");
 
     const errorText = error instanceof Error ? error.message : String(error);
     const errorMessage = `❌ Ошибка поиска:\n\n${errorText}\n\nПопробуйте позже или проверьте настройки.`;
 
-    if (statusChatId && statusMessageId) {
-      await ctx.api.editMessageText(statusChatId, statusMessageId, errorMessage);
-    } else {
-      await ctx.reply(errorMessage);
-    }
+    // Send error as NEW message (don't try to edit)
+    await ctx.reply(errorMessage);
   } finally {
     // Always remove from in-flight set
     webSearchInFlight.delete(chatId);
+    pipelineLog(10, "🔓", `Released in-flight lock for chat ${chatId}`);
   }
 }
 
@@ -752,6 +1120,9 @@ async function editTelegramMessage(
     });
   } catch (err) {
     const errText = formatErrorMessage(err);
+    if (MESSAGE_NOT_MODIFIED_RE.test(errText)) {
+      return;
+    }
     if (PARSE_ERR_RE.test(errText)) {
       await api.editMessageText(statusMessage.chatId, statusMessage.messageId, formatted, {
         reply_markup: replyMarkup,
