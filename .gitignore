@@ -194,3 +194,7 @@ for_*.txt
 *_why_make*.txt
 *_analysis.md
 news_analysis_*.md
+
+# Task planning files
+task.md
+TASK.md
