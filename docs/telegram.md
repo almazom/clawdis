@@ -66,7 +66,7 @@ The bot can automatically categorize messages using an LLM to detect if a user w
 **Behavior:**
 - When enabled, the bot will send messages like "google it" or "do deep research" to an LLM for categorization
 - Only messages that pass confidence threshold (0.7) and meet criteria (≥2 words, ≥6 chars, not commands) are processed
-- **Explicit commands `/web` and `/deep` always work regardless of this setting**
+- **Explicit commands `/web`, `/deep`, `/ai_day`, and `/ai_week` always work regardless of this setting**
 - Tests: grammY-based paths in `src/telegram/*.test.ts` cover DM + group gating; add more media and webhook cases as needed.
 
 ## Group etiquette
