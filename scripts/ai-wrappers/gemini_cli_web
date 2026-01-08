@@ -6,8 +6,13 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$SCRIPT_DIR/../../.env"
 
-QUERY="$1"
-TIMEOUT="${2:-${WEB_SEARCH_TIMEOUT_SECONDS:-60}}"
+QUERY="$*"
+
+TIMEOUT_SECONDS="${WEB_SEARCH_TIMEOUT_SECONDS:-}"
+if [ -z "$TIMEOUT_SECONDS" ] && [ -n "${WEB_SEARCH_TIMEOUT_MS:-}" ]; then
+  TIMEOUT_SECONDS=$((WEB_SEARCH_TIMEOUT_MS / 1000))
+fi
+TIMEOUT="${TIMEOUT_SECONDS:-60}"
 
 if [ -z "$QUERY" ]; then
   echo '{"error": "No query provided"}'
@@ -18,10 +23,20 @@ PROMPT="use web search for: $QUERY [ANSWER in Russian]"
 GEMINI_MODEL="${WEB_SEARCH_GEMINI_MODEL:-gemini-3-flash-preview}"
 
 # Execute with timeout
+if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
+  echo "Warning: WEB_SEARCH_TIMEOUT_SECONDS must be numeric, got \"$TIMEOUT\". Falling back to 60s." >&2
+  TIMEOUT=60
+fi
+
 timeout "$TIMEOUT" gemini "$PROMPT" -m "$GEMINI_MODEL" --output-format json 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -eq 124 ]; then
   echo '{"error": "gemini timeout"}'
   exit 1
+fi
+
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "Error: gemini CLI failed with exit code $EXIT_CODE" >&2
+  exit $EXIT_CODE
 fi
