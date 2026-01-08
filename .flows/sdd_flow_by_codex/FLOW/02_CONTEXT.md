@@ -4,6 +4,7 @@ Goal: understand the current project landscape (repo, docs, wiki) to align requi
 
 ## Read First (Required)
 
+- `.qoder/repowiki/en/content` - best starting point for project context if present; treat as a hint only because it may be outdated
 - `README.md` - project overview
 - `docs/` - any design docs, wiki, or specs
 - `package.json` / `Cargo.toml` / `pyproject.toml` - dependencies
@@ -33,6 +34,7 @@ Summarize findings in a short "Project Context Notes" section:
 - Existing constraints and dependencies
 - Areas that are fragile or incomplete
 - Conventions to follow (naming, patterns, style)
+- Default behaviors that can safely auto-fill optional gaps
 
 ## Output
 

@@ -16,10 +16,12 @@ Remaining: {REMAINING_GAPS}
 
 **Decision:** {Final decision}
 
+**Source:** {SOURCE} (user / auto / up2u all)
+
 **Confidence:** {AVG_CONFIDENCE}% (Kimi: {KIMI_CONFIDENCE}%, Claude: {CLAUDE_CONFIDENCE}%)
 
-**Rationale:**
-{Why this decision was made}
+**Short Reason:**
+{SHORT_REASON}
 
 **AI Recommendations:**
 - Kimi: "{kimi_summary}" ({KIMI_CONFIDENCE}%)
@@ -38,10 +40,12 @@ Remaining: {REMAINING_GAPS}
 
 **Decision:** {Final decision}
 
+**Source:** {SOURCE} (user / auto / up2u all)
+
 **Confidence:** {AVG_CONFIDENCE}% (Kimi: {KIMI_CONFIDENCE}%, Claude: {CLAUDE_CONFIDENCE}%)
 
-**Rationale:**
-{Why this decision was made}
+**Short Reason:**
+{SHORT_REASON}
 
 **AI Recommendations:**
 - Kimi: "{kimi_summary}" ({KIMI_CONFIDENCE}%)
@@ -63,3 +67,9 @@ Analyzed existing patterns from:
 Key pattern alignments:
 1. **{Pattern name}:** {Description}
 2. **{Pattern name}:** {Description}
+
+## Auto-Filled Assumptions
+
+List optional items that were auto-filled from context and confirmed by the user:
+
+- AS-001: {assumption} (confidence: {CONFIDENCE}%) - Rationale: {reason}

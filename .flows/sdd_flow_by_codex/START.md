@@ -18,6 +18,31 @@
 ## Mission
 
 Transform raw requirements into production-ready SDD with executable Trello cards.
+Planning only: never implement or modify project code. Final output is the SDD package and Trello cards in `<repo>/docs/sdd/<task-name>-sdd`.
+
+## AI-First Start (Default)
+
+Use this flow via START.md, not via scripts. When the user provides raw requirements, begin the interview and run all phases end-to-end.
+
+**User trigger format (example):**
+```
+Here is raw requirements:
+<paste requirements>
+force_interview: true
+force_tool: AskUserQuestionTool
+Start SDD flow by: /home/almaz/zoo_flow/clawdis/.flows/sdd_flow_by_codex/START.md
+```
+
+**Agent behavior (must):**
+- Start the low-cognitive-burden interview (preferences + critical gaps).
+- Tool-first: if the harness provides `AskUserQuestionTool` or `sdd-interview-harness`, use it for interview questions (including preferences).
+- Do not fall back to plain text unless the user explicitly allows it.
+- If `force_tool` is set and the tool is unavailable, stop and ask whether to proceed without the tool.
+- If `force_interview: true` is present, run the gap interview even if requirements seem complete.
+- Continue through Context → Gaps → Output without stopping.
+- Generate the full SDD package and Trello cards in: `<repo>/docs/sdd/<task-name>-sdd`.
+- Do not implement or change project code during this flow.
+- Do not require `generate-sdd.sh` unless the user explicitly requests CLI mode.
 
 ## Execution Protocol
 
@@ -31,13 +56,15 @@ PHASE 1 → PHASE 2 → PHASE 3 → PHASE 4
 **Read:** `FLOW/01_INPUT.md`
 
 1. Get raw requirements from user
-2. Validate required information exists
-3. Document in `raw-requirements.md`
+2. Ask for interview preferences (pacing, up2u mode). Use Russian by default. Do not mention "format".
+3. Validate required information exists (ask only missing criticals)
+4. Document in `raw-requirements.md`
 
 ### Phase 2: Context
 **Read:** `FLOW/02_CONTEXT.md`
 
 1. Analyze project structure (README, src/, docs/)
+   - Start with `.qoder/repowiki/en/content` if present (may be outdated; verify against repo)
 2. Identify existing patterns and conventions
 3. Document in `project-context.md`
 
@@ -45,16 +72,17 @@ PHASE 1 → PHASE 2 → PHASE 3 → PHASE 4
 **Read:** `FLOW/03_GAPS.md`
 
 1. Identify unknowns and ambiguities
-2. Ask user gap-filling questions
-3. Document decisions in `gaps.md`
-4. **DO NOT PROCEED until all gaps filled**
+2. Ask user only critical gap questions
+3. Auto-fill optional gaps when confidence is high; mark as assumptions
+4. Document decisions in `gaps.md`
+5. **DO NOT PROCEED until all gaps filled**
 
 ### Phase 4: Output
 **Read:** `FLOW/04_OUTPUT.md`
 
-Generate SDD package:
+Generate SDD package (task name slug):
 ```
-<feature>-sdd/
+<task-name>-sdd/
 ├── README.md
 ├── requirements.md
 ├── ui-flow.md
@@ -67,6 +95,12 @@ Generate SDD package:
     ├── progress.md
     └── 01-*.md ... NN-*.md
 ```
+
+**Output location defaults:**
+- `--output` wins if provided
+- else `SDD_OUTPUT_ROOT/<task-name>-sdd` if set
+- else `<repo>/docs/sdd/<task-name>-sdd` if requirements file is in a git repo
+- else current directory (blocked if running inside the flow folder)
 
 ## Complexity Assessment (Agent Decides)
 
@@ -115,18 +149,22 @@ Count these factors from requirements:
 
 1. **Stop only** for gap-filling questions
 2. **No placeholders** in final outputs
-3. **No assumptions** - ask user to clarify
+3. **No hidden assumptions** - optional defaults allowed only if documented and confirmed
 4. **Agent decides** card count (not user)
 5. **Max 4 SP** per card
 6. **Fight complexity** - simpler is better
+7. **Interview format**: no tables; use numbered options only
+8. **No implementation**: do not modify project code; produce only SDD docs + Trello cards
+9. **Guardian Gate**: never start implementation without explicit user approval (see `FLOW/04_OUTPUT.md`)
 
 ## Start Now
 
 1. Ask user for raw requirements
-2. Read `FLOW/01_INPUT.md`
-3. Execute phases in order
-4. Assess complexity yourself in Phase 4
-5. **Pass Phase 5: Confidence Gate before marking complete**
+2. Ask for interview preferences (pace, up2u mode). Use Russian by default.
+3. Read `FLOW/01_INPUT.md`
+4. Execute phases in order
+5. Assess complexity yourself in Phase 4
+6. **Pass Phase 5: Confidence Gate before marking complete**
 
 ---
 
@@ -142,7 +180,7 @@ Count these factors from requirements:
 |---|----------|--------|
 | 1 | All 12 requirements addressed? | 100% |
 | 2 | Trello cards map 1:1 to requirements? | Yes |
-| 3 | No assumptions made (all gaps filled)? | Yes |
+| 3 | No unapproved critical assumptions? | Yes |
 | 4 | Implementation details clear (code snippets, formats)? | Yes |
 | 5 | Logging format defined (exact messages)? | Yes |
 | 6 | Error handling covered (all cases)? | Yes |

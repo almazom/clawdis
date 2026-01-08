@@ -15,6 +15,7 @@ Conduct systematic interviews to fill ALL gaps in raw requirements, achieving 95
 - [ ] Initial gaps identified (at least 5-10 major gaps)
 - [ ] code-review.sh script is executable
 - [ ] Kimi and Claude CLIs installed and configured
+- [ ] Use Russian for all interview questions and SDD docs; do not ask language preference
 
 ### Gap Categories
 
@@ -22,7 +23,7 @@ Always check these categories:
 
 1. **User Input Scope**
    - What input modalities? (text/voice/image/file)
-   - What languages? (RU/EN/both)
+   - Language support: assume Russian unless requirements explicitly say otherwise
    - Any size limits?
    - Required vs optional fields?
 
@@ -80,7 +81,7 @@ ACTION: Read raw requirements
 ACTION: Analyze project patterns
 ACTION: Identify unknowns/conflicts
 
-OUTPUT: gaps-draft.md with table:
+OUTPUT: gaps-draft.md with structured list (no tables):
 
 | Gap ID | Category | Question | Priority | Status |
 |--------|----------|----------|----------|--------|
@@ -135,6 +136,11 @@ For each gap question, run:
 
 ### Phase 4: User Interview (per gap, 3-5 minutes)
 
+Tool-first: if the harness provides `AskUserQuestionTool` or `sdd-interview-harness`, use it to present each interview question (including preferences) and capture the user's answer.
+Do not fall back to plain text unless the user explicitly allows it.
+If `force_tool` is set and the tool is unavailable, stop and ask whether to continue without the tool.
+Always include options 1-3 (suggestions), 4 (free-form), 5 (up2u for this question), and 6 (up2u all remaining with brief rationale; no chain-of-thought).
+
 If AI consultation reaches ≥95% confidence:
 
 ```
@@ -157,7 +163,15 @@ AI Recommendation (96% confidence):
 
 Recommendation: Use case-insensitive matching
 
-Do you approve this decision? [Y/n]
+Options:
+1) SUGGESTED: Accept case-insensitive matching
+2) Use case-sensitive matching
+3) Make it configurable (default: case-insensitive)
+4) Other (type your own)
+5) up2u: accept suggested for this question
+6) up2u all: accept suggested for all remaining (brief rationale)
+
+Reply with the number (1-6). If you choose 4, add your custom text.
 ```
 
 If AI consultation <95% confidence:
@@ -188,8 +202,15 @@ Trade-offs:
 - Shorter (15 min): Faster feedback, might timeout on complex queries
 - Longer (20 min): Handles edge cases, longer user wait
 
-What timeout do you prefer? [15 / 20 / other]
-Please provide your reasoning:
+Options:
+1) SUGGESTED: 20 minutes
+2) 15 minutes
+3) 25 minutes
+4) Other (type your own)
+5) up2u: accept suggested for this question
+6) up2u all: accept suggested for all remaining (brief rationale)
+
+Reply with the number (1-6). If you choose 4, add your custom text.
 ```
 
 ### Phase 5: Decision Documentation
@@ -205,13 +226,11 @@ Document EVERY gap decision in gaps.md:
 
 **Decision:** Case-insensitive (substring match)
 
+**Source:** user
+
 **Confidence:** 97% (Kimi: 96%, Claude: 98%)
 
-**Rationale:**
-- Consistent with Telegram bot mention handling
-- Better user experience (no case requirements)
-- No performance impact
-- Follows existing pattern: src/telegram/bot.ts:42
+**Short Reason:** Consistent with Telegram bot mention handling; aligns with existing pattern at src/telegram/bot.ts:42.
 
 **AI Recommendations:**
 - Kimi: "Use case-insensitive for consistency" (96%)
@@ -236,14 +255,18 @@ Question: Should we {do X}?
 Context: {Existing patterns, code snippets}
 
 Options:
-- YES: {pros}
-- NO: {cons}
+- 1) SUGGESTED: {preferred yes/no}
+- 2) {alternative 1}
+- 3) {alternative 2}
+- 4) Other (type your own)
+- 5) up2u: accept suggested for this question
+- 6) up2u all: accept suggested for all remaining (brief rationale)
 
 AI Analysis: {Consult code-review.sh}
 
 Recommendation: {Based on AI + patterns}
 
-User Decision: {Yes/No + reasoning}
+User Decision: {Option number or custom text}
 ```
 
 ### Template 2: Options Selection
@@ -256,15 +279,18 @@ Question: Which {option} should we use?
 Context: {Requirements, constraints}
 
 Options:
-- OPTION A: {description, pros, cons}
-- OPTION B: {description, pros, cons}
-- OPTION C: {description, pros, cons}
+- 1) SUGGESTED: {option A}
+- 2) {option B}
+- 3) {option C}
+- 4) Other (type your own)
+- 5) up2u: accept suggested for this question
+- 6) up2u all: accept suggested for all remaining (brief rationale)
 
 AI Analysis: {Consult code-review.sh}
 
 Recommendation: {Based on analysis}
 
-User Decision: {Option + reasoning}
+User Decision: {Option number or custom text}
 ```
 
 ### Template 3: Value Specification
@@ -281,11 +307,19 @@ Considerations:
 - Industry standard: {value}
 - Project pattern: {value from similar feature}
 
+Options:
+- 1) SUGGESTED: {recommended value}
+- 2) {value option 2}
+- 3) {value option 3}
+- 4) Other (type your own)
+- 5) up2u: accept suggested for this question
+- 6) up2u all: accept suggested for all remaining (brief rationale)
+
 AI Analysis: {Consult code-review.sh}
 
 Recommendation: {Specific value + rationale}
 
-User Decision: {Value + reasoning}
+User Decision: {Option number or custom text}
 ```
 
 ### Template 4: Process Definition
@@ -298,14 +332,18 @@ Question: How should {process flow} work?
 Context: {User journey, technical constraints}
 
 Options:
-- FLOW A: {description}
-- FLOW B: {description}
+- 1) SUGGESTED: {flow A}
+- 2) {flow B}
+- 3) {flow C}
+- 4) Other (type your own)
+- 5) up2u: accept suggested for this question
+- 6) up2u all: accept suggested for all remaining (brief rationale)
 
 AI Analysis: {Consult code-review.sh}
 
 Recommendation: {Specific flow + rationale}
 
-User Decision: {Flow + reasoning}
+User Decision: {Option number or custom text}
 ```
 
 ---
@@ -482,7 +520,7 @@ Remaining: Z
 
 - User can [action] via [channel]
 - System should [automatic action]
-- Results should be [format] in [language]
+- Results should be [format] (Russian by default)
 - Should handle [volume] per [timeframe]
 
 ## Open Questions (Will become GAPs)

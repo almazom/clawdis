@@ -36,6 +36,32 @@ INPUT → CONTEXT → GAPS → OUTPUT
 
 See `FLOW/` for detailed phase documentation.
 
+## Interview UX (Low Cognitive Burden)
+
+- Ask interview preferences once (pacing, up2u mode); use Russian by default
+- Ask only critical gaps that are missing or conflicting
+- One question at a time by default; optional batch mode
+- Each question includes context, goal, why, and progress
+- Provide 3 options + "Other"; mark a suggested option at the start
+- Offer up2u for this question and up2u all for remaining gaps
+- Auto-fill optional gaps only at 95%+ confidence; confirm in one summary step
+
+## Context Gathering Hint
+
+Start project context gathering from `.qoder/repowiki/en/content` if present (may be outdated; verify with repo files).
+
+## Force Interview Flag
+
+If raw requirements include `force_interview: true`, run the gap interview even if requirements look complete.
+
+## Force Tool Flag
+
+If raw requirements include `force_tool: AskUserQuestionTool` or `force_tool: sdd-interview-harness`, use that tool for interview questions. If it is unavailable, stop and ask whether to continue without the tool.
+
+## Tool-First Rule
+
+If the tool is available, always use it for interview questions. Do not fall back to plain text unless the user explicitly allows it.
+
 ## Structure
 
 ```
@@ -57,10 +83,10 @@ sdd_flow/
 
 ## Output
 
-Generated SDD package:
+Generated SDD package (task name slug):
 
 ```
-<feature>-sdd/
+<task-name>-sdd/
 ├── README.md              # Entry point
 ├── requirements.md        # Functional requirements
 ├── ui-flow.md            # User journey
@@ -74,6 +100,19 @@ Generated SDD package:
     ├── progress.md       # Visual progress
     └── 01-*.md ... NN-*.md  # Executable cards
 ```
+
+## Output Location Defaults
+
+- If `--output` is provided, it is always used.
+- Else, if `SDD_OUTPUT_ROOT` is set, output goes to `$SDD_OUTPUT_ROOT/<task-name>-sdd`.
+- Else, if the requirements file is inside a git repo, output defaults to `<repo>/docs/sdd/<task-name>-sdd`.
+- Else, output defaults to the current directory.
+
+## Scope (Planning Only)
+
+- Do not implement or modify project code during this flow.
+- Final deliverable is the SDD package and Trello cards inside `docs/sdd/<task-name>-sdd`.
+- **Guardian Gate:** implementation is forbidden until the user explicitly approves the SDD and requests code changes.
 
 ## Card Count
 
@@ -101,7 +140,7 @@ See `CARD_COUNT_GUIDELINES.md` for scoring formula.
 ## Principles
 
 1. **No placeholders** in final outputs
-2. **No assumptions** - clarify gaps with user
+2. **No hidden assumptions** - auto-fill optional items only if documented and confirmed
 3. **KISS** - max 4 SP per card
 4. **Linear execution** - cards run in order
 5. **Self-contained** - each card has full context

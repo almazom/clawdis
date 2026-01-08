@@ -96,13 +96,18 @@ generate_suggestions() {
 # Main TUI function
 run_gap_interview() {
     # Mock gaps data (in real system, loaded from gaps.md)
+    # Format: GAP_ID|FULL_QUESTION|SIMPLE_QUESTION|CONTEXT|GOAL|WHY
     gaps=(
-        "GAP-001|Should detection be case-sensitive?"
-        "GAP-002|What should be the inactivity threshold?"
-        "GAP-003|Which notification channel should be used?"
+        "GAP-001|Should detection be case-sensitive?|Case sensitive or not?|Input detection rules|Consistent matching behavior|Affects matching logic and user expectation"
+        "GAP-002|What should be the inactivity threshold?|How long before inactive?|User activity tracking|Reasonable defaults|Defines when users are considered inactive"
+        "GAP-003|Which notification channel should be used?|Where do we notify?|Delivery channels|Clear user communication|Determines message delivery path"
     )
     
     answers=()
+    auto_accept=false
+    auto_accept_with_rationale=false
+    total_gaps=${#gaps[@]}
+    current_index=0
     
     echo "═══════════════════════════════════════════════════════"
     echo "  GAP INTERVIEW SESSION"
@@ -110,27 +115,56 @@ run_gap_interview() {
     echo ""
     
     for gap in "${gaps[@]}"; do
-        IFS='|' read -r gap_id question <<< "$gap"
-        
+        current_index=$((current_index + 1))
+        IFS='|' read -r gap_id question simple_question context goal why <<< "$gap"
+        simple_question="${simple_question:-$question}"
+        context="${context:-General}"
+        goal="${goal:-Clarify requirements}"
+        why="${why:-Needed for implementation}"
+
+        # Progress bar (10 segments)
+        filled=$((current_index * 10 / total_gaps))
+        bar="$(printf '%*s' "$filled" '' | tr ' ' '#')"
+        bar="${bar}$(printf '%*s' $((10 - filled)) '' | tr ' ' '.')"
+        echo -e "${BOLD}Progress:${NC} ${current_index}/${total_gaps} [${bar}]"
+        echo -e "${BOLD}Context:${NC} $context"
+        echo -e "${BOLD}Goal:${NC} $goal"
+        echo -e "${BOLD}Why:${NC} $why"
         show_gap "$gap_id" "$question"
+        echo -e "${BOLD}Simple:${NC} $simple_question"
         echo ""
         
         # Generate 3 suggestions
         mapfile -t suggestions < <(generate_suggestions "$gap_id" "$question")
         
         echo -e "${BOLD}AI Suggestions (colored):${NC}"
-        show_suggestion "1" "${suggestions[0]}" "$GREEN"
+        show_suggestion "1" "SUGGESTED: ${suggestions[0]}" "$GREEN"
         show_suggestion "2" "${suggestions[1]}" "$YELLOW"
         show_suggestion "3" "${suggestions[2]}" "$BLUE"
         echo ""
         
         # Show option 4 (manual)
         echo -e "  ${CYAN}${BOLD}[4]${NC} ${UNDERLINE}Manual input${NC}"
+        echo -e "  ${MAGENTA}${BOLD}[5]${NC} up2u: accept suggested for this question"
+        echo -e "  ${MAGENTA}${BOLD}[6]${NC} up2u all: accept suggested for all remaining (brief rationale)"
         echo ""
         
+        if [ "$auto_accept" = true ]; then
+            answer="${suggestions[0]}"
+            echo -e "${GREEN}✓ Auto-selected:${NC} $answer"
+            if [ "$auto_accept_with_rationale" = true ]; then
+                echo -e "${CYAN}Reason:${NC} Suggested option aligns with default patterns."
+            fi
+            answers+=("$gap_id|$answer")
+            echo ""
+            echo -e "${MAGENTA}─────────────────────────────────────────────────────${NC}"
+            echo ""
+            continue
+        fi
+
         # User selection loop
         while true; do
-            echo -ne "${BOLD}Select (1-4) or ${UNDERLINE}s${NC}${BOLD} to skip: ${NC}"
+            echo -ne "${BOLD}Select (1-6) or ${UNDERLINE}s${NC}${BOLD} to skip: ${NC}"
             read -n 1 selection
             echo ""
             
@@ -151,6 +185,22 @@ run_gap_interview() {
                     else
                         echo -e "${RED}✗ Cannot be empty${NC}"
                     fi
+                    ;;
+                5)
+                    answer="${suggestions[0]}"
+                    echo -e "${GREEN}✓ Selected:${NC} $answer"
+                    answers+=("$gap_id|$answer")
+                    break
+                    ;;
+                6)
+                    auto_accept=true
+                    auto_accept_with_rationale=true
+                    answer="${suggestions[0]}"
+                    echo -e "${GREEN}✓ Selected:${NC} $answer"
+                    echo -e "${CYAN}Reason:${NC} Suggested option aligns with default patterns."
+                    echo -e "${MAGENTA}Auto-accept enabled for remaining gaps (with brief rationale)${NC}"
+                    answers+=("$gap_id|$answer")
+                    break
                     ;;
                 s|S)
                     echo -e "${YELLOW}⚠ Skipped${NC}"

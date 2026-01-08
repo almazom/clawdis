@@ -1,10 +1,10 @@
 # SDD Output Structure
 
-Goal: generate a complete SDD package with executable Trello cards.
+Goal: generate a complete SDD package with executable Trello cards. Planning only; do not implement or modify project code.
 
 ## Output Location
 
-Default: `docs/sdd/<feature-slug>/` in the project root.
+Default: `docs/sdd/<task-name>-sdd/` in the project root.
 Use a different path only if the user requests it.
 
 ## Required Files (Top Level)
@@ -53,3 +53,15 @@ Use a different path only if the user requests it.
 ## Completion Rule
 
 Do not finalize outputs until all gaps are closed and requirements are consistent.
+
+## Guardian Gate (Implementation Lock)
+
+After generating the SDD package and Trello cards, **stop** and request explicit user approval before any implementation work.
+
+Required user confirmations:
+- All gaps are filled and `gaps.md` is complete.
+- Auto-filled assumptions are accepted.
+- The SDD package in `docs/sdd/<task-name>-sdd` is the final deliverable for this phase.
+- An explicit request to implement (e.g., "start implementation", "proceed to code changes").
+
+If any confirmation is missing, do not proceed beyond planning; ask for the missing approval.

@@ -3,6 +3,7 @@
 ## 🎯 Purpose
 
 Define exact structure, content, and quality standards for all SDD-generated files to ensure consistency and executability.
+Planning only: do not implement or modify project code as part of this flow.
 
 ---
 
@@ -390,12 +391,11 @@ Remaining: 0
 
 **Decision:** Case-insensitive (substring match)
 
+**Source:** user
+
 **Confidence:** 97% (Kimi: 96%, Claude: 98%)
 
-**Rationale:**
-- Consistent with Telegram pattern
-- Better UX
-- No performance impact
+**Short Reason:** Consistent with Telegram pattern; better UX; no performance impact.
 
 **AI Recommendations:**
 - Kimi: "Use case-insensitive" (96%)
@@ -413,11 +413,11 @@ Remaining: 0
 
 **Decision:** 15 minutes
 
+**Source:** user
+
 **Confidence:** 92% (insufficient, asked follow-up)
 
-**Rationale:**
-- Typical research duration: 10-15 min
-- Need async status updates for Telegram 60s limit
+**Short Reason:** Typical research duration is 10-15 min; Telegram needs async status updates.
 
 **Follow-up:** Implement webhook-based status updates
 

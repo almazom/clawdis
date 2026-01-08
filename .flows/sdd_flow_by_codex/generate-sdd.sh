@@ -18,7 +18,7 @@ RED='\033[0;31m'
 GRAY='\033[0;90m'
 NC='\033[0m' # No Color
 
-SCRIPT_DIR="$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REQUIREMENTS_FILE=""
 CUSTOM_OUTPUT_DIR=""
 DRY_RUN=false
@@ -90,6 +90,12 @@ PREREQUISITES:
     - kimi or claude CLI for AI consultation (optional)
     - All quality gates passed (if using --validate)
     - Clean git state (if using --git-workflow)
+
+OUTPUT LOCATION:
+    - If --output is provided, it is always used.
+    - Else, if SDD_OUTPUT_ROOT is set, output goes to $SDD_OUTPUT_ROOT/<feature>-sdd.
+    - Else, if the requirements file is inside a git repo, output defaults to <repo>/docs/sdd/<feature>-sdd.
+    - Else, output defaults to the current directory.
 EOF
 }
 
@@ -280,6 +286,15 @@ generate_output_dir() {
     echo "${feature_name}-sdd"
 }
 
+detect_repo_root() {
+    local file="$1"
+    local dir
+    dir="$(cd "$(dirname "$file")" && pwd)"
+    if command -v git > /dev/null 2>&1; then
+        git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true
+    fi
+}
+
 # Extract other metadata
 extract_metadata() {
     local file="$1"
@@ -319,9 +334,22 @@ main() {
     if [ -n "$CUSTOM_OUTPUT_DIR" ]; then
         OUTPUT_DIR="$CUSTOM_OUTPUT_DIR"
         log_info "Using custom output directory: $OUTPUT_DIR"
+    elif [ -n "$SDD_OUTPUT_ROOT" ]; then
+        OUTPUT_DIR="$SDD_OUTPUT_ROOT/$(generate_output_dir "$FEATURE_NAME")"
+        log_info "Using SDD_OUTPUT_ROOT: $OUTPUT_DIR"
     else
-        OUTPUT_DIR=$(generate_output_dir "$FEATURE_NAME")
-        log_info "Generated output directory: $OUTPUT_DIR"
+        REPO_ROOT="$(detect_repo_root "$REQUIREMENTS_FILE")"
+        if [ -n "$REPO_ROOT" ]; then
+            OUTPUT_DIR="$REPO_ROOT/docs/sdd/$(generate_output_dir "$FEATURE_NAME")"
+            log_info "Detected repo root output directory: $OUTPUT_DIR"
+        else
+            OUTPUT_DIR="$(generate_output_dir "$FEATURE_NAME")"
+            log_info "Generated output directory: $OUTPUT_DIR"
+            if [[ "$PWD" == "$SCRIPT_DIR"* ]]; then
+                log_error "Output would be created inside the flow folder. Set --output or SDD_OUTPUT_ROOT."
+                exit 1
+            fi
+        fi
     fi
     
     # Extract metadata
