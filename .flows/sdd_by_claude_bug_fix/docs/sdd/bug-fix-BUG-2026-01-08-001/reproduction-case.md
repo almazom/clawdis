@@ -1,7 +1,7 @@
-# Reproduction Case: {BUG_ID}
+# Reproduction Case: BUG-2026-01-08-001
 
 > ARC Status: {VERIFIED | FLAKY | NOT_REPRODUCIBLE}
-> Last Verified: {DATE}
+> Last Verified: 2026-01-08
 
 ## Minimal Reproduction
 
@@ -53,12 +53,12 @@
 
 ```bash
 #!/bin/bash
-# reproduce-{BUG_ID}.sh
-# Automated reproduction script for {BUG_ID}
+# reproduce-BUG-2026-01-08-001.sh
+# Automated reproduction script for BUG-2026-01-08-001
 
 set -e
 
-echo "=== Reproducing {BUG_ID} ==="
+echo "=== Reproducing BUG-2026-01-08-001 ==="
 echo "Started: $(date)"
 
 # Optional performance threshold check (set to 0 to disable)
@@ -110,14 +110,14 @@ fi
 | Total Attempts | {TOTAL} |
 | Successful Reproductions | {SUCCESS} |
 | Reproduction Rate | {RATE}% |
-| Average Time to Reproduce | {TIME}s |
+| Average Time to Reproduce | 13:32:22s |
 
 ### Reproduction Log
 
 | Attempt | Date | Result | Notes |
 |---------|------|--------|-------|
-| 1 | {DATE} | {PASS/FAIL} | {notes} |
-| 2 | {DATE} | {PASS/FAIL} | {notes} |
+| 1 | 2026-01-08 | {PASS/FAIL} | {notes} |
+| 2 | 2026-01-08 | {PASS/FAIL} | {notes} |
 | ... | ... | ... | ... |
 
 ## Environment Sensitivity
@@ -172,4 +172,4 @@ fi
 
 **ARC Created by:** {CREATOR}
 **ARC Verified by:** {VERIFIER}
-**Last Update:** {DATE}
+**Last Update:** 2026-01-08

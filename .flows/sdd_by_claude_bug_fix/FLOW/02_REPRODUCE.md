@@ -56,6 +56,32 @@ pnpm install  # Fresh dependencies
 
 **Mark as:** `NOT_REPRODUCIBLE` (cannot proceed without reproduction)
 
+### Low-Burden Followups (if details missing)
+
+When asking for more details, use the gap interview format:
+- Provide context + goal + why + progress
+- Offer 3 options + Other + up2u
+- Ask one question at a time unless the user prefers batches
+
+### Performance Reproduction (if applicable)
+
+For performance issues, define a threshold and capture timing evidence.
+Example: "Bug reproduces if build time > 180s."
+
+```bash
+# Example timing capture
+SECONDS=0
+{trigger_command}
+DURATION=$SECONDS
+echo "Duration: ${DURATION}s"
+
+# Threshold check (example)
+if [ "$DURATION" -gt 180 ]; then
+  echo "BUG REPRODUCED: duration > 180s"
+  exit 1
+fi
+```
+
 ## Step 3: Create Reproduction Script
 
 Create automated script that reproduces the bug:

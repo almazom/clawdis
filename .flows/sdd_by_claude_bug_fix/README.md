@@ -37,6 +37,16 @@ BUG_REPORT → REPRODUCE → ROOT_CAUSE → FIX_STRATEGY → OUTPUT
 
 See `FLOW/` for detailed phase documentation.
 
+## Interview UX (Low Cognitive Burden)
+
+- Ask interview preferences once (pacing, up2u mode); use Russian by default
+- Ask only critical gap questions (missing fields)
+- One question at a time by default; optional batch mode
+- Each question includes context, goal, why, and progress
+- Provide 3 options + "Other"; mark a suggested option at the start
+- Offer "up2u" to accept suggested options for remaining gaps
+- Auto-fill optional fields (e.g., severity) when confidence is high; confirm once
+
 ## Key Principles
 
 ```

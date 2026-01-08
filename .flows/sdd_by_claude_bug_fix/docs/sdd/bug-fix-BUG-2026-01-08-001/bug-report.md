@@ -1,7 +1,7 @@
-# Bug Report: {BUG_ID}
+# Bug Report: BUG-2026-01-08-001
 
-> Status: {STATUS} | Severity: {SEVERITY} | Reporter: {REPORTER}
-> Created: {DATE}
+> Status: PENDING | Severity: P2-MEDIUM | Reporter: {REPORTER}
+> Created: 2026-01-08
 
 ## Quick Intake (minimum required for automation)
 
@@ -98,4 +98,4 @@ List any fields auto-filled from repo defaults or agent assumptions and confirm 
 ---
 
 **Validated by:** {VALIDATOR}
-**Validation Date:** {DATE}
+**Validation Date:** 2026-01-08

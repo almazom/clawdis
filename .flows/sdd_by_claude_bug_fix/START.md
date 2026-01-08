@@ -8,13 +8,19 @@
 # 1. Verify setup
 ./verify-prereqs.sh
 
-# 2. Get bug report from user
-#    Required: summary, steps, error, severity
+# 2. Ask interview preferences if gaps are needed
+#    pacing / up2u mode (use Russian by default)
 
-# 3. Generate bug fix package
+# 3. Get bug report from user
+#    Required: summary, steps, error, severity
+#    Prompt source: prompts/bug-report.yaml -> bug_report_prompt
+#    If any required field is TBD, use:
+#    prompts/gap-interview.yaml -> gap_interview_prompt
+
+# 4. Generate bug fix package
 ./generate-bug-fix.sh --bug-report bug-report.md --validate
 
-# 4. Start execution
+# 5. Start execution
 cd docs/sdd/bug-fix-$(date +%Y-%m-%d)-001/trello-cards
 cat 00_EXECUTE_HERE.md
 ```
@@ -35,6 +41,17 @@ cat 00_EXECUTE_HERE.md
 ## Mission
 
 Transform bug reports into verified fixes with regression tests and executable Trello cards.
+
+## Interview UX (Low Cognitive Burden)
+
+- Ask interview preferences once (pacing, up2u mode); use Russian by default
+- Ask only critical gap questions
+- One question at a time by default; optional batch mode
+- Each question includes context, goal, why, and progress
+- Provide 3 options + "Other"; mark a suggested option at the start
+- Offer "up2u" to accept suggested options for remaining gaps
+- Auto-fill optional gaps when confidence is high; confirm in one step
+- If `AskUserQuestionTool` is available, use it for each gap question
 
 ## 📋 What This Flow Does
 
@@ -164,6 +181,7 @@ Bug fixes are focused. Calculate based on:
 #    - Numbered reproduction steps
 #    - Exact error output
 #    - Severity (P0-P3)
+#    Prompt source: prompts/bug-report.yaml -> bug_report_prompt
 
 # Step 2: Execute planning phases
 #    - Read FLOW/01_BUG_REPORT.md
