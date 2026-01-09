@@ -330,18 +330,16 @@ export class MiniMaxTTSClient {
 
     try {
       const url = new URL(MINIMAX_API_URL);
-      url.searchParams.set("GroupId", this.groupId);
 
       const payload = {
         model,
         text,
-        voice_id: voiceId,
         voice_setting: {
+          voice_id: voiceId,
           speed,
           volume: 1.0,
           pitch: 0,
         },
-        pronunciation_dict: [],
         emotion: emotion,
         output_format: "hex",
       };
