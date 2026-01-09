@@ -245,7 +245,7 @@ main() {
         local time=$(date +%H:%M:%S)
 
         sed -i "s/{BUG_ID}/$BUG_ID/g" "$file"
-        sed -i "s/{SUMMARY}/$SUMMARY/g" "$file"
+        sed -i "s|{SUMMARY}|$SUMMARY|g" "$file"
         sed -i "s/{DATE}/$date/g" "$file"
         sed -i "s/{TIME}/$time/g" "$file"
         sed -i "s/{STATUS}/PENDING/g" "$file"
