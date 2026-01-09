@@ -707,12 +707,14 @@ export type WebSearchConfig = z.infer<typeof webSearchSchema>;
 
 const AI_CLUB_DEFAULTS = {
   cliPath: "ai_club",
+  telegaV2Path: "telega_v2",
   timeoutMs: 300000,
 } as const;
 
 const aiClubSchema = z
   .object({
     cliPath: z.string().default(AI_CLUB_DEFAULTS.cliPath),
+    telegaV2Path: z.string().default(AI_CLUB_DEFAULTS.telegaV2Path),
     timeoutMs: z.number().int().positive().default(AI_CLUB_DEFAULTS.timeoutMs),
   })
   .optional();
@@ -1323,10 +1325,12 @@ function applyWebSearchEnvOverrides(config: ClawdisConfig): ClawdisConfig {
 
 function applyAiClubEnvOverrides(config: ClawdisConfig): ClawdisConfig {
   const cliPath = process.env.AI_CLUB_CLI_PATH;
+  const telegaV2Path = process.env.TELEGA_V2_PATH;
   const timeoutMsEnv = process.env.AI_CLUB_TIMEOUT_MS;
 
   const aiClub: AiClubConfig = {
     cliPath: config.aiClub?.cliPath ?? AI_CLUB_DEFAULTS.cliPath,
+    telegaV2Path: config.aiClub?.telegaV2Path ?? AI_CLUB_DEFAULTS.telegaV2Path,
     timeoutMs: config.aiClub?.timeoutMs ?? AI_CLUB_DEFAULTS.timeoutMs,
   };
 
@@ -1334,6 +1338,13 @@ function applyAiClubEnvOverrides(config: ClawdisConfig): ClawdisConfig {
     const normalized = cliPath.trim();
     if (normalized) {
       aiClub.cliPath = normalized;
+    }
+  }
+
+  if (telegaV2Path) {
+    const normalized = telegaV2Path.trim();
+    if (normalized) {
+      aiClub.telegaV2Path = normalized;
     }
   }
 
