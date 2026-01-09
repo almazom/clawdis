@@ -783,10 +783,10 @@ function parseAiClubCommand(
   botUsername?: string,
 ): { period: "today" | "week" } | null {
   const trimmed = messageText.trim();
-  const match = /^\/ai_(day|daily|week)(?:@([a-z0-9_]+))?$/i.exec(trimmed);
+  const match = /^\/ai_(day|week)(?:@([a-z0-9_]+))?$/i.exec(trimmed);
   if (!match) return null;
   const cmd = match[1].toLowerCase();
-  const period = (cmd === "day" || cmd === "daily") ? "today" : "week";
+  const period = cmd === "day" ? "today" : "week";
   const mentioned = match[2];
   if (mentioned && botUsername && mentioned.toLowerCase() !== botUsername) {
     return null;
@@ -859,17 +859,22 @@ async function runAiClubAnalysis(
 
     const periodLabel = period === "today" ? "Ежедневный" : "Еженедельный";
     const emoji = period === "today" ? "☀️" : "📅";
-    
+    const reportUrl =
+      report.url || (await publishContent(report.summary, `ai-club-${Date.now()}`));
+    const linkPart = reportUrl
+      ? `\n\n🔗 [Полный отчёт](${reportUrl})`
+      : "\n\n_(Полная версия недоступна)_";
+
     let resultMessage = `${emoji} *${periodLabel} отчёт AI Club*\n`;
-    resultMessage += `📢 Канал: ${report.channel || "@aiclubsweggs"}\n\n`;
-    
+    resultMessage += `📢 Канал: ${report.channel}\n\n`;
+
     if (topics.length > 0) {
-      resultMessage += `*Ключевые темы:*\n${topics.join('\n')}\n\n`;
+      resultMessage += `*Ключевые темы:*\n${topics.join("\n")}\n`;
     } else {
-      resultMessage += `_Темы не найдены\._\n\n`;
+      resultMessage += `_Темы не найдены._\n`;
     }
-    
-    resultMessage += `🔗 [Полный отчёт](${report.url})`;
+
+    resultMessage += linkPart;
 
     pipelineLog(5, "📤", "Sending simplified summary to Telegram...");
     await editTelegramMessage(ctx.api, { chatId: statusChatId!, messageId: statusMessageId }, resultMessage);
