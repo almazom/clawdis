@@ -21,26 +21,30 @@ When a command is matched, `runAiClubAnalysis` (lines 797-873) is called. It per
 1. **Status Update**: Sends an initial "⚙️ Запускаю аналитику AI Club..." message to provide feedback.
 2. **Data Fetching**: Calls `getAiClubReport(period)` to retrieve report data.
 3. **Report Generation**:
-    - The `getAiClubReport` function (in `src/commands/ai-club.ts`) executes an external CLI tool.
-    - CLI tool (default: `ai_club`) is called with `--today` or `--week` flags.
-    - The CLI tool's JSON output is parsed to extract the `summary`, `report_url`, and `channel`.
+    - The `getAiClubReport` function (in `src/commands/ai-club.ts`) calls `telega_v2 fetch-range` with a computed time filter.
+    - The cache file path from `telega_v2` is passed into the AI Club segregation CLI (`aiClub.cliPath`) via `--from-cache` and `--period`.
+    - The segregation CLI returns JSON containing `summary`, `report_url`, and `channel`.
 4. **Summary Processing**:
     - `runAiClubAnalysis` parses the `summary` field from the JSON.
     - It specifically looks for a section titled "Ключевые темы" (Key topics).
     - It extracts bullet points (starting with `*`, `•`, or `-`) under this section.
 5. **Telegram Delivery**:
     - Constructs a message containing the period label (Daily/Weekly), the channel name, the extracted key topics, and a link to the full report.
+    - If `report_url` is missing, publishes the summary via `publish_me` and uses the resulting telegra.ph link.
     - Updates the initial status message with this final content.
 
 ## Configuration
 
 The behavior can be configured via the main configuration file (loaded in `src/config/config.ts`):
 - `aiClub.cliPath`: Path to the `ai_club` executable (defaults to `ai_club`).
-- `aiClub.timeoutMs`: Execution timeout for the CLI tool (defaults to 300,000ms / 5 minutes).
+- `aiClub.telegaV2Path`: Path to the `telega_v2` executable (defaults to `telega_v2`).
+- `aiClub.telegaV2Profile`: telega_v2 session profile (defaults to `default`).
+- `aiClub.channel`: AI Club Telegram channel handle (defaults to `@aiclubsweggs`).
+- `aiClub.timeoutMs`: Execution timeout for the pipeline (defaults to 300,000ms / 5 minutes).
 
 ## External Dependency: `ai_club` CLI
 
-The core logic for generating the reports resides in an external `ai_club` CLI tool. `clawdis` acts as a wrapper that triggers this tool and formats its output for Telegram. The CLI is expected to return a JSON object with the following structure:
+The core logic for generating the reports resides in an external `ai_club` segregation CLI tool. `clawdis` triggers `telega_v2 fetch-range` first, then runs the segregation CLI against the cached messages. The CLI is expected to return a JSON object with the following structure:
 ```json
 {
   "status": "success",
