@@ -190,6 +190,12 @@ TELEGRAM_MARKDOWN_FIX.md
 *FIX.md
 *_FIX.md
 
+# Bug and issue tracking files
+*.bug.md
+*.issue.md
+BUG-*.md
+ISSUE-*.md
+
 # Temporary debugging/analysis files
 for_kimi_*.txt
 for_*.txt
