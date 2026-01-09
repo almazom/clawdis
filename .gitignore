@@ -114,6 +114,7 @@ docs/project_gathering/
 # Deep research working files (generated)
 docs/sdd/
 flows/**/docs/
+.flows/**/docs/
 runs/
 prompts/
 sdd-flow/
@@ -154,6 +155,11 @@ test*.md
 *_test.md
 scripts/test-*.sh
 *.mjs
+
+# Reproduction test files
+*.repro.test.ts
+repro.test.ts
+reproduction.test.ts
 
 # E2E test results (local)
 tests/e2e_web_search_results/
