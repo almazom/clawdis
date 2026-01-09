@@ -2,6 +2,36 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createTelegramBot } from './bot.js';
 import type { Message } from 'grammy';
 
+const execMock = vi.hoisted(() => {
+  const mock = vi.fn(
+    (
+      command: string,
+      options: unknown,
+      callback?: (err: unknown, stdout: string, stderr: string) => void,
+    ) => {
+      const cb = typeof options === 'function' ? options : callback;
+      if (cb) {
+        cb(null, JSON.stringify({ url: 'https://example.com/published' }), '');
+      }
+      return {};
+    },
+  );
+  mock[Symbol.for('nodejs.util.promisify.custom')] = () =>
+    Promise.resolve({
+      stdout: JSON.stringify({ url: 'https://example.com/published' }),
+      stderr: '',
+    });
+  return mock;
+});
+
+vi.mock('node:child_process', async () => {
+  const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  return {
+    ...actual,
+    exec: execMock,
+  };
+});
+
 // Mock AiClub module
 vi.mock('../commands/ai-club.js', () => ({
   getAiClubReport: vi.fn(),
@@ -63,6 +93,7 @@ describe('Telegram Bot - AiClub Integration', () => {
   
   beforeEach(() => {
     vi.clearAllMocks();
+    execMock.mockClear();
     
     bot = createTelegramBot({
       token: mockToken,
@@ -103,7 +134,7 @@ describe('Telegram Bot - AiClub Integration', () => {
   
   it('triggers ai club day report on /ai_day command', async () => {
     vi.mocked(getAiClubReport).mockResolvedValue({
-      summary: 'Daily summary',
+      summary: 'Ключевые темы\n- Topic one\n- Topic two',
       url: 'https://example.com/day'
     });
 
@@ -111,21 +142,20 @@ describe('Telegram Bot - AiClub Integration', () => {
     await bot.handleUpdate(createMessageUpdate(message));
     
     expect(getAiClubReport).toHaveBeenCalledWith('today');
-    
+
     // Verify result was delivered
     const editCalls = bot.api.editMessageText.mock.calls;
-    expect(editCalls[editCalls.length - 1]).toEqual([
-      123,
-      77,
-      expect.stringContaining('Daily summary'),
-      { parse_mode: "MarkdownV2", reply_markup: undefined }
-    ]);
-    expect(editCalls[editCalls.length - 1][2]).toContain('[Полный отчёт](https://example.com/day)');
+    const [chatId, messageId, messageText, options] = editCalls[editCalls.length - 1];
+    expect(chatId).toBe(123);
+    expect(messageId).toBe(77);
+    expect(messageText).toContain('Topic one');
+    expect(messageText).toContain('https://example.com/day');
+    expect(options?.parse_mode).toBe('MarkdownV2');
   });
 
   it('triggers ai club week report on /ai_week command', async () => {
     vi.mocked(getAiClubReport).mockResolvedValue({
-      summary: 'Weekly summary',
+      summary: 'Ключевые темы\n- Week topic',
       url: 'https://example.com/week'
     });
 
@@ -136,12 +166,12 @@ describe('Telegram Bot - AiClub Integration', () => {
     
     // Verify result was delivered
     const editCalls = bot.api.editMessageText.mock.calls;
-    expect(editCalls[editCalls.length - 1]).toEqual([
-      123,
-      77,
-      expect.stringContaining('Weekly summary'),
-      { parse_mode: "MarkdownV2", reply_markup: undefined }
-    ]);
+    const [chatId, messageId, messageText, options] = editCalls[editCalls.length - 1];
+    expect(chatId).toBe(123);
+    expect(messageId).toBe(77);
+    expect(messageText).toContain('Week topic');
+    expect(messageText).toContain('https://example.com/week');
+    expect(options?.parse_mode).toBe('MarkdownV2');
   });
   
   it('handles report errors gracefully', async () => {
@@ -157,5 +187,21 @@ describe('Telegram Bot - AiClub Integration', () => {
       expect.stringContaining('Не удалось получить отчёт'),
       { parse_mode: "MarkdownV2", reply_markup: undefined }
     ]);
+  });
+
+  it('falls back to publish_me when report url is missing', async () => {
+    vi.mocked(getAiClubReport).mockResolvedValue({
+      summary: 'Daily summary',
+      url: '',
+      channel: '@aiclubsweggs',
+    });
+
+    const message = createMockMessage('/ai_day');
+    await bot.handleUpdate(createMessageUpdate(message));
+
+    const editCalls = bot.api.editMessageText.mock.calls;
+    expect(editCalls[editCalls.length - 1][2]).toContain(
+      '[Полный отчёт](https://example.com/published)',
+    );
   });
 });
