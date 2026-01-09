@@ -6,6 +6,7 @@ import { sendCommand } from "../commands/send.js";
 import { sessionsCommand } from "../commands/sessions.js";
 import { setupCommand } from "../commands/setup.js";
 import { statusCommand } from "../commands/status.js";
+import { voiceCommand } from "../commands/voice.js";
 import { danger, setVerbose } from "../globals.js";
 import { loginWeb, logoutWeb } from "../provider-web.js";
 import { defaultRuntime } from "../runtime.js";
@@ -360,6 +361,25 @@ Shows token usage per session when the agent reports it; set agent.contextTokens
         },
         defaultRuntime,
       );
+    });
+
+  program
+    .command("v [text]")
+    .alias("voice")
+    .description(
+      "Generate TTS voice message from text or last message (requires TTS configuration)",
+    )
+    .option("--session <key>", "Session to retrieve last message from (default: main)")
+    .option("--play", "Auto-play the generated audio")
+    .option("--json", "Output JSON format")
+    .action(async (text: string | undefined, opts: any) => {
+      setVerbose(Boolean(opts.verbose));
+      try {
+        await voiceCommand(text, opts, defaultRuntime);
+      } catch (err) {
+        defaultRuntime.error(String(err));
+        defaultRuntime.exit(1);
+      }
     });
 
   registerBrowserCli(program);
