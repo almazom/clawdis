@@ -140,6 +140,7 @@ INVESTIGATION*.md
 *COMPLETE.md
 COMPLETION*.md
 IMPLEMENTATION*.md
+*_IMPLEMENTATION.md
 
 # Test scripts and documentation (Python, Shell, and Markdown)
 test*.py
