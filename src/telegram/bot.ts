@@ -33,7 +33,7 @@ import {
   generateGapQuestions,
   type DeepResearchProgressStage,
 } from "../deep-research/index.js";
-import { resolveStorePath, updateLastRoute } from "../config/sessions.js";
+import { resolveStorePath, updateLastRoute, resolveSessionTranscriptPath, loadSessionStore } from "../config/sessions.js";
 import { danger, isVerbose, logVerbose } from "../globals.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { categorizeIntent } from "../infra/intent-categorizer.js";
@@ -56,6 +56,10 @@ import {
   type TTSProgressStage,
 } from "../tts/button.js";
 import { isTTSEnabled, synthesize } from "../tts/provider.js";
+import {
+  parseVoiceCommand,
+  getLastAssistantMessageFromTranscript,
+} from "../tts/voice-command.js";
 import { formatTelegramMessage } from "./formatter.js";
 
 const PARSE_ERR_RE =
@@ -255,6 +259,18 @@ export function createTelegramBot(opts: TelegramBotOptions) {
           messageText,
           transcript,
           progressStatus,
+        )
+      ) {
+        return;
+      }
+
+      // Check for /v voice command
+      if (
+        await handleVoiceCommand(
+          ctx,
+          chatId,
+          messageText,
+          `telegram:${chatId}`,
         )
       ) {
         return;
@@ -499,6 +515,84 @@ async function handleDeepResearchMessage(
     respondOnInvalid: true,
     statusMessage,
   });
+}
+
+async function handleVoiceCommand(
+  ctx: Context,
+  chatId: number,
+  messageText: string,
+  sessionKey: string,
+): Promise<boolean> {
+  const command = parseVoiceCommand(messageText);
+  if (!command) {
+    return false;
+  }
+
+  // Check if TTS is enabled
+  if (!isTTSEnabled()) {
+    await ctx.reply("TTS is not enabled. Configure MINIMAX_API_KEY in .env");
+    return true;
+  }
+
+  let textToSpeak = command.text;
+
+  // If no text provided, get last assistant message from session
+  if (!textToSpeak) {
+    const cfg = loadConfig();
+    const sessionPath = resolveStorePath(cfg.session?.store);
+    
+    try {
+      const store = loadSessionStore(sessionPath);
+      const session = store[sessionKey];
+      
+      if (!session?.sessionId) {
+        await ctx.reply("No session found. Send a message first.");
+        return true;
+      }
+
+      // Get last assistant message from transcript
+      const transcriptPath = resolveSessionTranscriptPath(session.sessionId);
+      textToSpeak = await getLastAssistantMessageFromTranscript(transcriptPath);
+      
+      if (!textToSpeak) {
+        await ctx.reply("No assistant message found in this session.");
+        return true;
+      }
+
+      await ctx.reply(`🔊 Generating voice message from last response...`);
+    } catch (error) {
+      await ctx.reply(`❌ Error reading session: ${error instanceof Error ? error.message : String(error)}`);
+      return true;
+    }
+  } else {
+    await ctx.reply(`🔊 Generating voice message...`);
+  }
+
+  // Generate TTS
+  try {
+    const result = await synthesize(textToSpeak, async (progress) => {
+      // Progress updates if needed
+      logVerbose(`[telegram] TTS progress: ${progress}%`);
+    });
+
+    if (!result.success || !result.audioPath) {
+      await ctx.reply(`❌ Failed to generate voice: ${result.error || "Unknown error"}`);
+      return true;
+    }
+
+    // Send the audio file
+    const audioFile = new InputFile(result.audioPath, "voice.mp3");
+    const caption = result.cached ? "💾 Voice (cached)" : "🎤 Voice message";
+    
+    await ctx.replyWithVoice(audioFile, {
+      caption,
+    });
+
+    return true;
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error instanceof Error ? error.message : String(error)}`);
+    return true;
+  }
 }
 
 async function handleDeepResearchTopic(params: {
