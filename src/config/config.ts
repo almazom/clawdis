@@ -708,6 +708,8 @@ export type WebSearchConfig = z.infer<typeof webSearchSchema>;
 const AI_CLUB_DEFAULTS = {
   cliPath: "ai_club",
   telegaV2Path: "telega_v2",
+  telegaV2Profile: "default",
+  channel: "@aiclubsweggs",
   timeoutMs: 300000,
 } as const;
 
@@ -715,6 +717,8 @@ const aiClubSchema = z
   .object({
     cliPath: z.string().default(AI_CLUB_DEFAULTS.cliPath),
     telegaV2Path: z.string().default(AI_CLUB_DEFAULTS.telegaV2Path),
+    telegaV2Profile: z.string().default(AI_CLUB_DEFAULTS.telegaV2Profile),
+    channel: z.string().default(AI_CLUB_DEFAULTS.channel),
     timeoutMs: z.number().int().positive().default(AI_CLUB_DEFAULTS.timeoutMs),
   })
   .optional();
@@ -1326,11 +1330,15 @@ function applyWebSearchEnvOverrides(config: ClawdisConfig): ClawdisConfig {
 function applyAiClubEnvOverrides(config: ClawdisConfig): ClawdisConfig {
   const cliPath = process.env.AI_CLUB_CLI_PATH;
   const telegaV2Path = process.env.TELEGA_V2_PATH;
+  const telegaV2Profile = process.env.TELEGA_V2_PROFILE;
+  const channelEnv = process.env.AI_CLUB_CHANNEL;
   const timeoutMsEnv = process.env.AI_CLUB_TIMEOUT_MS;
 
   const aiClub: AiClubConfig = {
     cliPath: config.aiClub?.cliPath ?? AI_CLUB_DEFAULTS.cliPath,
     telegaV2Path: config.aiClub?.telegaV2Path ?? AI_CLUB_DEFAULTS.telegaV2Path,
+    telegaV2Profile: config.aiClub?.telegaV2Profile ?? AI_CLUB_DEFAULTS.telegaV2Profile,
+    channel: config.aiClub?.channel ?? AI_CLUB_DEFAULTS.channel,
     timeoutMs: config.aiClub?.timeoutMs ?? AI_CLUB_DEFAULTS.timeoutMs,
   };
 
@@ -1346,6 +1354,14 @@ function applyAiClubEnvOverrides(config: ClawdisConfig): ClawdisConfig {
     if (normalized) {
       aiClub.telegaV2Path = normalized;
     }
+  }
+
+  if (telegaV2Profile?.trim()) {
+    aiClub.telegaV2Profile = telegaV2Profile.trim();
+  }
+
+  if (channelEnv?.trim()) {
+    aiClub.channel = channelEnv.trim();
   }
 
   if (timeoutMsEnv) {
