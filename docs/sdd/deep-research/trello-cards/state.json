@@ -1,0 +1,398 @@
+{
+  "version": "1.0",
+  "feature": "deep-research",
+  "overall_status": "COMPLETE",
+  "started_at": "2026-01-02T07:30:35Z",
+  "completed_at": "2026-01-02T08:04:04Z",
+  "current_card": null,
+  "agent_session_id": null,
+  "cards": {
+    "01": {
+      "id": "DR-01",
+      "title": "Add deepResearch config schema",
+      "file": "01-config-schema.md",
+      "story_points": 2,
+      "status": "completed",
+      "started_at": "2026-01-02T07:30:35Z",
+      "completed_at": "2026-01-02T07:33:10Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "deepResearchSchema added to config.ts",
+        "schema includes enabled/dryRun/cliPath/outputLanguage/keywords",
+        "dryRun defaults to true",
+        "env overrides for DEEP_RESEARCH_ENABLED/DEEP_RESEARCH_DRY_RUN/DEEP_RESEARCH_CLI_PATH",
+        "pnpm build passes",
+        "DeepResearchConfig type exported"
+      ]
+    },
+    "02": {
+      "id": "DR-02",
+      "title": "Create keyword detection module",
+      "file": "02-keyword-detection.md",
+      "story_points": 3,
+      "status": "completed",
+      "started_at": "2026-01-02T07:33:51Z",
+      "completed_at": "2026-01-02T07:34:52Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "src/deep-research/detect.ts created",
+        "src/deep-research/index.ts created",
+        "detectDeepResearchIntent exported",
+        "extractTopicFromMessage exported",
+        "all 20 patterns included",
+        "case-insensitive matching",
+        "pnpm build passes"
+      ]
+    },
+    "03": {
+      "id": "DR-03",
+      "title": "Write detection unit tests",
+      "file": "03-detection-tests.md",
+      "story_points": 2,
+      "status": "completed",
+      "started_at": "2026-01-02T07:35:13Z",
+      "completed_at": "2026-01-02T07:39:23Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "src/deep-research/detect.test.ts created",
+        "tests cover Russian patterns",
+        "tests cover English patterns",
+        "tests cover mixed patterns",
+        "tests cover case insensitivity",
+        "tests cover non-matching cases",
+        "tests cover topic extraction",
+        "pnpm test src/deep-research/detect.test.ts passes"
+      ]
+    },
+    "04": {
+      "id": "DR-04",
+      "title": "Hook detection into Telegram handler",
+      "file": "04-telegram-hook.md",
+      "story_points": 3,
+      "status": "completed",
+      "started_at": "2026-01-02T07:39:48Z",
+      "completed_at": "2026-01-02T07:41:18Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "deep-research imports added in bot.ts",
+        "detection check added to message handler",
+        "detection gated by deepResearch.enabled !== false",
+        "custom keywords respected from config",
+        "detection logs with topic extraction",
+        "ctx.state deepResearch flags set",
+        "pnpm build passes"
+      ]
+    },
+    "05": {
+      "id": "DR-05",
+      "title": "Send detection acknowledgment message",
+      "file": "05-acknowledgment.md",
+      "story_points": 2,
+      "status": "completed",
+      "started_at": "2026-01-02T07:41:40Z",
+      "completed_at": "2026-01-02T07:42:43Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "src/deep-research/messages.ts created",
+        "acknowledgment format matches spec",
+        "bot sends acknowledgment on detection",
+        "message includes extracted topic",
+        "bot returns early after detection",
+        "pnpm build passes"
+      ]
+    },
+    "06": {
+      "id": "DR-06",
+      "title": "Create confirmation inline button",
+      "file": "06-inline-button.md",
+      "story_points": 3,
+      "status": "completed",
+      "started_at": "2026-01-02T07:43:06Z",
+      "completed_at": "2026-01-02T07:44:28Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "src/deep-research/button.ts created",
+        "createExecuteButton builds inline keyboard",
+        "button text matches spec",
+        "topic encoded in callback data",
+        "callback handler responds to button press",
+        "button press sends start message",
+        "pnpm build passes"
+      ]
+    },
+    "07": {
+      "id": "DR-07",
+      "title": "Create gdr.sh executor wrapper",
+      "file": "07-executor.md",
+      "story_points": 3,
+      "status": "completed",
+      "started_at": "2026-01-02T07:44:49Z",
+      "completed_at": "2026-01-02T07:46:06Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "src/deep-research/executor.ts created",
+        "executeDeepResearch exported",
+        "dryRun defaults to true from config",
+        "CLI args built for dry-run vs production",
+        "stdout/stderr captured",
+        "runId extracted from JSONL",
+        "resultJsonPath extracted from completion event",
+        "success/failure returned",
+        "pnpm build passes"
+      ]
+    },
+    "08": {
+      "id": "DR-08",
+      "title": "Parse result.json for delivery",
+      "file": "08-result-parser.md",
+      "story_points": 2,
+      "status": "completed",
+      "started_at": "2026-01-02T07:46:36Z",
+      "completed_at": "2026-01-02T07:47:26Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "src/deep-research/parser.ts created",
+        "parseResultJson reads and parses result.json",
+        "summaryBullets extracted",
+        "shortAnswer extracted",
+        "opinion extracted",
+        "publishUrl extracted",
+        "returns null on error",
+        "handles relative and absolute paths",
+        "pnpm build passes"
+      ]
+    },
+    "09": {
+      "id": "DR-09",
+      "title": "Format and send result message",
+      "file": "09-result-delivery.md",
+      "story_points": 2,
+      "status": "completed",
+      "started_at": "2026-01-02T07:47:48Z",
+      "completed_at": "2026-01-02T07:48:37Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "src/deep-research/deliver.ts created",
+        "deliverResults handles success and failure",
+        "result.json parsed and formatted message sent",
+        "messages.resultDelivery used for formatting",
+        "messages.error used for failures",
+        "truncateForTelegram handles long messages",
+        "pnpm build passes"
+      ]
+    },
+    "10": {
+      "id": "DR-10",
+      "title": "Wire complete pipeline",
+      "file": "10-wire-pipeline.md",
+      "story_points": 3,
+      "status": "completed",
+      "started_at": "2026-01-02T07:48:59Z",
+      "completed_at": "2026-01-02T07:49:56Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "button click triggers full pipeline",
+        "start message sent immediately",
+        "executor runs with dry-run mode",
+        "results parsed from result.json",
+        "formatted result message sent",
+        "summary bullets included",
+        "short answer included",
+        "opinion included",
+        "publish URL included",
+        "pnpm build passes"
+      ]
+    },
+    "11": {
+      "id": "DR-11",
+      "title": "Add error handling + retry button",
+      "file": "11-error-handling.md",
+      "story_points": 3,
+      "status": "completed",
+      "started_at": "2026-01-02T07:50:19Z",
+      "completed_at": "2026-01-02T07:52:19Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "CLI validation before execution",
+        "clear error for missing CLI",
+        "timeout handling configurable",
+        "retry button on all errors",
+        "error message includes run_id when available",
+        "markdown fallback to plain text",
+        "pnpm build passes"
+      ]
+    },
+    "12": {
+      "id": "DR-12",
+      "title": "E2E test with dry-run",
+      "file": "12-e2e-test.md",
+      "story_points": 2,
+      "status": "completed",
+      "started_at": "2026-01-02T07:52:42Z",
+      "completed_at": "2026-01-02T08:04:04Z",
+      "error": null,
+      "acceptance_criteria_passed": [
+        "e2e test file created",
+        "tests cover detection to delivery flow",
+        "tests cover all 20 patterns",
+        "tests cover error handling",
+        "pnpm test passes",
+        "manual Telegram test documented",
+        "pnpm build passes"
+      ]
+    }
+  },
+  "progress": {
+    "completed": 12,
+    "total": 12,
+    "percentage": 100,
+    "story_points_completed": 30,
+    "story_points_total": 30
+  },
+  "execution_log": [
+    {
+      "ts": "2026-01-02T07:30:35Z",
+      "event": "card_start",
+      "card": "01",
+      "title": "Config Schema"
+    },
+    {
+      "ts": "2026-01-02T07:33:10Z",
+      "event": "card_complete",
+      "card": "01",
+      "duration_sec": 155
+    },
+    {
+      "ts": "2026-01-02T07:33:51Z",
+      "event": "card_start",
+      "card": "02",
+      "title": "Keyword Detection"
+    },
+    {
+      "ts": "2026-01-02T07:34:52Z",
+      "event": "card_complete",
+      "card": "02",
+      "duration_sec": 61
+    },
+    {
+      "ts": "2026-01-02T07:35:13Z",
+      "event": "card_start",
+      "card": "03",
+      "title": "Detection Tests"
+    },
+    {
+      "ts": "2026-01-02T07:39:23Z",
+      "event": "card_complete",
+      "card": "03",
+      "duration_sec": 250
+    },
+    {
+      "ts": "2026-01-02T07:39:48Z",
+      "event": "card_start",
+      "card": "04",
+      "title": "Telegram Hook"
+    },
+    {
+      "ts": "2026-01-02T07:41:18Z",
+      "event": "card_complete",
+      "card": "04",
+      "duration_sec": 90
+    },
+    {
+      "ts": "2026-01-02T07:41:40Z",
+      "event": "card_start",
+      "card": "05",
+      "title": "Acknowledgment"
+    },
+    {
+      "ts": "2026-01-02T07:42:43Z",
+      "event": "card_complete",
+      "card": "05",
+      "duration_sec": 63
+    },
+    {
+      "ts": "2026-01-02T07:43:06Z",
+      "event": "card_start",
+      "card": "06",
+      "title": "Inline Button"
+    },
+    {
+      "ts": "2026-01-02T07:44:28Z",
+      "event": "card_complete",
+      "card": "06",
+      "duration_sec": 82
+    },
+    {
+      "ts": "2026-01-02T07:44:49Z",
+      "event": "card_start",
+      "card": "07",
+      "title": "Executor"
+    },
+    {
+      "ts": "2026-01-02T07:46:06Z",
+      "event": "card_complete",
+      "card": "07",
+      "duration_sec": 77
+    },
+    {
+      "ts": "2026-01-02T07:46:36Z",
+      "event": "card_start",
+      "card": "08",
+      "title": "Result Parser"
+    },
+    {
+      "ts": "2026-01-02T07:47:26Z",
+      "event": "card_complete",
+      "card": "08",
+      "duration_sec": 50
+    },
+    {
+      "ts": "2026-01-02T07:47:48Z",
+      "event": "card_start",
+      "card": "09",
+      "title": "Result Delivery"
+    },
+    {
+      "ts": "2026-01-02T07:48:37Z",
+      "event": "card_complete",
+      "card": "09",
+      "duration_sec": 49
+    },
+    {
+      "ts": "2026-01-02T07:48:59Z",
+      "event": "card_start",
+      "card": "10",
+      "title": "Wire Pipeline"
+    },
+    {
+      "ts": "2026-01-02T07:49:56Z",
+      "event": "card_complete",
+      "card": "10",
+      "duration_sec": 57
+    },
+    {
+      "ts": "2026-01-02T07:50:19Z",
+      "event": "card_start",
+      "card": "11",
+      "title": "Error Handling"
+    },
+    {
+      "ts": "2026-01-02T07:52:19Z",
+      "event": "card_complete",
+      "card": "11",
+      "duration_sec": 120
+    },
+    {
+      "ts": "2026-01-02T07:52:42Z",
+      "event": "card_start",
+      "card": "12",
+      "title": "E2E Test"
+    },
+    {
+      "ts": "2026-01-02T08:04:04Z",
+      "event": "card_complete",
+      "card": "12",
+      "duration_sec": 682
+    }
+  ]
+}

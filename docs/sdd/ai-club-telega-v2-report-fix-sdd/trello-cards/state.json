@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "feature": "ai-club-telega-v2-report-fix",
+  "overall_status": "COMPLETE",
+  "started_at": "2026-01-09T08:58:46Z",
+  "completed_at": "2026-01-09T09:24:10Z",
+  "current_card": "04",
+  "agent_session_id": null,
+  "cards": {
+    "01": {
+      "status": "completed",
+      "started_at": "2026-01-09T08:58:46Z",
+      "completed_at": "2026-01-09T09:06:44Z",
+      "error": null
+    },
+    "02": {
+      "status": "completed",
+      "started_at": "2026-01-09T09:07:28Z",
+      "completed_at": "2026-01-09T09:08:18Z",
+      "error": null
+    },
+    "03": {
+      "status": "completed",
+      "started_at": "2026-01-09T09:08:36Z",
+      "completed_at": "2026-01-09T09:14:01Z",
+      "error": null
+    },
+    "04": {
+      "status": "completed",
+      "started_at": "2026-01-09T09:14:18Z",
+      "completed_at": "2026-01-09T09:24:10Z",
+      "error": null
+    }
+  },
+  "progress": {
+    "completed": 4,
+    "total": 4,
+    "percentage": 100,
+    "story_points_completed": 12,
+    "story_points_total": 12
+  },
+  "execution_log": []
+}
