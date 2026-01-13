@@ -5,6 +5,31 @@
 - Tests: colocated `*.test.ts`.
 - Docs: `docs/` (images, queue, Pi config). Built output lives in `dist/`.
 
+## Restart AI Tool (restart-ai)
+
+Before any Telegram operation, ensure the gateway is healthy and has latest code:
+
+```bash
+# Quick health check
+restart-ai --check-only
+
+# If confidence < 95%, update + restart
+restart-ai
+
+# Verbose output for debugging
+restart-ai --verbose
+
+# JSON output for programmatic use
+restart-ai --check-only --json
+```
+
+The tool provides a confidence score (0-100%) based on:
+- Process running (25pts)
+- Port listening (25pts)
+- Health check passing (30pts)
+- Git changes detected (10pts)
+- Build artifacts exist (10pts)
+
 ## Build, Test, and Development Commands
 - Install deps: `pnpm install`
 - Run CLI in dev: `pnpm clawdis ...` (tsx entry) or `pnpm dev` for `src/index.ts`.

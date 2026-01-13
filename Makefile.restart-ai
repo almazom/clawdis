@@ -1,0 +1,36 @@
+# Makefile target for restart-ai
+# Usage: make restart-ai [OPTIONS]
+#
+# Options are passed through to restart-ai:
+#   make restart-ai --verbose
+#   make restart-ai --check-only
+#   make restart-ai --dry-run
+#   make restart-ai --force
+#   make restart-ai --json
+
+RESTART_AI := /home/almaz/.local/bin/restart-ai
+
+restart-ai:
+	@$(RESTART_AI) $(filter-out $@,$(MAKEFLAGS)) $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+
+# Alias for quick restart
+restart-fast: restart-ai
+
+# Help target
+restart-ai-help:
+	@echo "restart-ai - AI Agent Gateway Restart Tool"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make restart-ai              # Full update + restart"
+	@echo "  make restart-ai --verbose    # Verbose output"
+	@echo "  make restart-ai --check-only # Health check only"
+	@echo "  make restart-ai --dry-run    # Show what would happen"
+	@echo "  make restart-ai --force      # Force restart"
+	@echo "  make restart-ai --json       # JSON output"
+	@echo ""
+	@echo "Direct access:"
+	@echo "  /home/almaz/.local/bin/restart-ai"
+	@echo "  /home/almaz/.local/bin/make restart-ai"
+	@echo "  /home/almaz/.local/bin/make restart-fast"
+
+.PHONY: restart-ai restart-fast restart-ai-help
