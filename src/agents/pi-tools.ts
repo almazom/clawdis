@@ -12,6 +12,9 @@ import {
 } from "./bash-tools.js";
 import { createClawdisTools } from "./clawdis-tools.js";
 import { sanitizeToolResultImages } from "./tool-images.js";
+import { runExec } from "../process/exec.js";
+
+const ASK_GEMINI_CLI = "/home/almaz/TOOLS/ask_cli_agents/ask_gemini";
 
 // TODO(steipete): Remove this wrapper once pi-mono ships file-magic MIME detection
 // for `read` image payloads in `@mariozechner/pi-coding-agent` (then switch back to `codingTools` directly).
@@ -293,6 +296,322 @@ function createClawdisReadTool(base: AnyAgentTool): AnyAgentTool {
   };
 }
 
+function createAskGeminiTool(): AnyAgentTool {
+  return {
+    label: "Ask Gemini",
+    name: "ask_gemini_basic",
+    description:
+      "Send AI query to Gemini with dynamic mindset selection. Supports: review, codereview, arch, qa, debug, research, critical, project, ux, docs, ocr, url, epub",
+    parameters: Type.Object({
+      prompt: Type.String({
+        description: "The query/prompt to send to AI",
+      }),
+      mindset: Type.Optional(
+        Type.String({
+          description:
+            "Persona/mindset: review, codereview, arch, qa, debug, research, critical, project, ux, docs, ocr, url, epub",
+        }),
+      ),
+      model: Type.Optional(
+        Type.String({
+          description: "Model to use (default: gemini-2.0-flash)",
+        }),
+      ),
+      timeout: Type.Optional(
+        Type.Number({
+          description: "Timeout in seconds (default: 60)",
+        }),
+      ),
+    }),
+    execute: async (_toolCallId: string, args: unknown) => {
+      const { prompt, mindset, model, timeout } = args as {
+        prompt: string;
+        mindset?: string;
+        model?: string;
+        timeout?: number;
+      };
+
+      try {
+        const args: string[] = ["-c", prompt];
+        if (mindset) args.push("--mindset", mindset);
+        if (model) args.push("--model", model);
+        if (timeout) args.push("--timeout", String(timeout));
+
+        const result = await runExec(ASK_GEMINI_CLI, args, {
+          timeoutMs: (timeout ?? 60) * 1000,
+        });
+        return {
+          content: [{ type: "text", text: result.stdout || result.stderr }],
+          details: {},
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `Error: ${String(error)}` },
+          ],
+          details: {},
+        };
+      }
+    },
+  };
+}
+
+function createAskGeminiWebTool(): AnyAgentTool {
+  return {
+    label: "Ask Gemini Web",
+    name: "ask_gemini_web",
+    description:
+      "Perform web search using Gemini with automatic web fetch capabilities for current information",
+    parameters: Type.Object({
+      query: Type.String({
+        description: "Search query for current/recent information",
+      }),
+      mindset: Type.Optional(
+        Type.String({
+          description: "Persona/mindset for analysis",
+        }),
+      ),
+      enableWeb: Type.Optional(
+        Type.Boolean({
+          description: "Enable web search (default: true)",
+          default: true,
+        }),
+      ),
+    }),
+    execute: async (_toolCallId: string, args: unknown) => {
+      const { query, mindset, enableWeb } = args as {
+        query: string;
+        mindset?: string;
+        enableWeb?: boolean;
+      };
+
+      try {
+        const cliArgs: string[] = ["-c", query];
+        if (enableWeb !== false) {
+          cliArgs.push("--web");
+        }
+        if (mindset) cliArgs.push("--mindset", mindset);
+
+        const result = await runExec(ASK_GEMINI_CLI, cliArgs, {
+          timeoutMs: 120_000,
+        });
+        return {
+          content: [{ type: "text", text: result.stdout || result.stderr }],
+          details: {},
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `Error: ${String(error)}` },
+          ],
+          details: {},
+        };
+      }
+    },
+  };
+}
+
+function createAskGeminiDeepDiveTool(): AnyAgentTool {
+  return {
+    label: "Ask Gemini Deep Dive",
+    name: "ask_gemini_deep_dive",
+    description:
+      "Deep research: диприсерч, deep dive, deep research, исследование - comprehensive analysis with web search and research mindset",
+    parameters: Type.Object({
+      query: Type.String({
+        description: "Research question or topic for deep analysis",
+      }),
+      collection: Type.Optional(
+        Type.String({
+          description: "URL collection name for parallel source analysis",
+        }),
+      ),
+      sources: Type.Optional(
+        Type.Array(
+          Type.String({
+            description: "Individual URLs to analyze",
+          }),
+        ),
+      ),
+      mindset: Type.Optional(
+        Type.String({
+          description: "Override mindset (default: research)",
+          default: "research",
+        }),
+      ),
+    }),
+    execute: async (_toolCallId: string, args: unknown) => {
+      const { query, collection, sources, mindset } = args as {
+        query: string;
+        collection?: string;
+        sources?: string[];
+        mindset?: string;
+      };
+
+      try {
+        const cliArgs: string[] = [
+          "-c",
+          query,
+          "--web",
+          "--mindset",
+          mindset ?? "research",
+        ];
+
+        if (collection) {
+          cliArgs.push("--url-collection", collection);
+        }
+
+        if (sources && sources.length > 0) {
+          for (const url of sources) {
+            cliArgs.push("--url", url);
+          }
+        }
+
+        const result = await runExec(ASK_GEMINI_CLI, cliArgs, {
+          timeoutMs: 180_000,
+        });
+        return {
+          content: [{ type: "text", text: result.stdout || result.stderr }],
+          details: {},
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `Error: ${String(error)}` },
+          ],
+          details: {},
+        };
+      }
+    },
+  };
+}
+
+function createAskGeminiPdfTool(): AnyAgentTool {
+  return {
+    label: "Ask Gemini PDF",
+    name: "ask_gemini_pdf",
+    description: "Analyze PDF documents with page selection and OCR support",
+    parameters: Type.Object({
+      file: Type.String({
+        description: "Path to PDF file",
+      }),
+      pages: Type.Optional(
+        Type.String({
+          description:
+            "Page selection: 1-5, 1,3,5, or 1-10,15-20",
+        }),
+      ),
+      ocr: Type.Optional(
+        Type.Boolean({
+          description: "Enable OCR for scanned documents (default: false)",
+          default: false,
+        }),
+      ),
+      prompt: Type.String({
+        description: "Analysis instruction for the document",
+      }),
+      mindset: Type.Optional(
+        Type.String({
+          description: "Persona/mindset for analysis",
+        }),
+      ),
+    }),
+    execute: async (_toolCallId: string, args: unknown) => {
+      const { file, pages, ocr, prompt, mindset } = args as {
+        file: string;
+        pages?: string;
+        ocr?: boolean;
+        prompt: string;
+        mindset?: string;
+      };
+
+      try {
+        const cliArgs: string[] = ["-f", file, "-c", prompt];
+        if (pages) cliArgs.push("--pages", pages);
+        if (ocr) cliArgs.push("--ocr");
+        if (mindset) cliArgs.push("--mindset", mindset);
+
+        const result = await runExec(ASK_GEMINI_CLI, cliArgs, {
+          timeoutMs: 180_000,
+        });
+        return {
+          content: [{ type: "text", text: result.stdout || result.stderr }],
+          details: {},
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `Error: ${String(error)}` },
+          ],
+          details: {},
+        };
+      }
+    },
+  };
+}
+
+function createAskGeminiCollectionTool(): AnyAgentTool {
+  return {
+    label: "Ask Gemini Collection",
+    name: "ask_gemini_collection",
+    description:
+      "Parallel analysis of multiple URLs from a URL collection for comprehensive research",
+    parameters: Type.Object({
+      collection: Type.String({
+        description: "URL collection name (without .yaml)",
+      }),
+      prompt: Type.String({
+        description: "Analysis prompt for all sources",
+      }),
+      mindset: Type.Optional(
+        Type.String({
+          description: "Persona/mindset for analysis",
+        }),
+      ),
+      timeout: Type.Optional(
+        Type.Number({
+          description: "Timeout per URL in seconds (default: 60)",
+          default: 60,
+        }),
+      ),
+    }),
+    execute: async (_toolCallId: string, args: unknown) => {
+      const { collection, prompt, mindset, timeout } = args as {
+        collection: string;
+        prompt: string;
+        mindset?: string;
+        timeout?: number;
+      };
+
+      try {
+        const cliArgs: string[] = [
+          "--url-collection",
+          collection,
+          "-c",
+          prompt,
+        ];
+        if (mindset) cliArgs.push("--mindset", mindset);
+        if (timeout) cliArgs.push("--timeout", String(timeout));
+
+        const result = await runExec(ASK_GEMINI_CLI, cliArgs, {
+          timeoutMs: (timeout ?? 60) * 1000 * 10, // 10x for collection
+        });
+        return {
+          content: [{ type: "text", text: result.stdout || result.stderr }],
+          details: {},
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `Error: ${String(error)}` },
+          ],
+          details: {},
+        };
+      }
+    },
+  };
+}
+
 export function createClawdisCodingTools(options?: {
   bash?: BashToolDefaults & ProcessToolDefaults;
 }): AnyAgentTool[] {
@@ -314,6 +633,11 @@ export function createClawdisCodingTools(options?: {
     ...createClawdisTools(),
     createWebSearchTool(),
     createWebFetchTool(),
+    createAskGeminiTool(),
+    createAskGeminiWebTool(),
+    createAskGeminiDeepDiveTool(),
+    createAskGeminiPdfTool(),
+    createAskGeminiCollectionTool(),
   ];
   return tools.map(normalizeToolParameters);
 }
