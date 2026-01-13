@@ -1,0 +1,44 @@
+# Пример конфигурации SSH с автоматической сменой темы Kitty
+
+# Добавьте эти настройки в ~/.ssh/config
+
+# СontrolMaster для быстрых подключений
+Host *
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 600
+
+# Продакшн серверы (красная тема)
+Host prod-* production-* web* prod.*
+    HostName %h
+    User your_username
+    PermitLocalCommand yes
+    LocalCommand kitty @ set-colors --configured -a ~/.config/kitty/themes/remote-production.conf 2>/dev/null
+    RemoteCommand export KITTY_THEME=production; bash
+    RequestTTY yes
+
+# Стагинг серверы (оранжевая тема)
+Host staging-* stg-* staging.* test-*
+    HostName %h
+    User your_username
+    PermitLocalCommand yes
+    LocalCommand kitty @ set-colors --configured -a ~/.config/kitty/themes/remote-staging.conf 2>/dev/null
+    RemoteCommand export KITTY_THEME=staging; bash
+    RequestTTY yes
+
+# Девелопмент серверы (синяя тема)
+Host dev-* development-* dev.* localhost vm-*
+    HostName %h
+    User your_username
+    PermitLocalCommand yes
+    LocalCommand kitty @ set-colors --configured -a ~/.config/kitty/themes/remote-dev.conf 2>/dev/null
+    RemoteCommand export KITTY_THEME=development; bash
+    RequestTTY yes
+
+# Остальные серверы (стандартная SSH тема)
+Host *
+    User your_username
+    PermitLocalCommand yes
+    LocalCommand kitty @ set-colors --configured -a ~/.config/kitty/themes/remote-ssh.conf 2>/dev/null
+    RemoteCommand export KITTY_THEME=ssh; bash
+    RequestTTY yes
