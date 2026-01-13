@@ -706,7 +706,7 @@ const webSearchSchema = z
 export type WebSearchConfig = z.infer<typeof webSearchSchema>;
 
 const AI_CLUB_DEFAULTS = {
-  cliPath: "ai_club",
+  cliPath: "ai_club_clawdis",
   telegaV2Path: "telega_v2",
   telegaV2Profile: "default",
   channel: "@aiclubsweggs",

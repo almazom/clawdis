@@ -48,6 +48,7 @@ import { messages as webSearchMessages } from "../web-search/messages.js";
 import { executeWebSearch } from "../web-search/executor.js";
 import { executeMultiAgentWebSearch, formatTelegramWithAgent } from "../web-search/multi-agent.js";
 import { getAiClubReport } from "../commands/ai-club.js";
+import { getAiReport } from "../commands/ai-report/index.js";
 import {
   createTTSButton,
   createTTSProgressButton,
@@ -157,6 +158,13 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       const rawText = (msg.text ?? msg.caption ?? "").trim();
       const isWebCommand = /^\/web(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
       const isAiClubCommand = /^\/ai_(day|daily|week)(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
+      const isPingCommand = /^\/ping(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
+
+      // Handle /ping command - TEST CHANGE
+      if (isPingCommand) {
+        await ctx.reply("🏓 Pong! CLAWDIS is running.");
+        return;
+      }
 
       if (!isWebCommand && !isAiClubCommand) {
         try {
@@ -306,6 +314,13 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       const aiClubCommand = parseAiClubCommand(messageText, botUsername);
       if (aiClubCommand) {
         await runAiClubAnalysis(ctx, chatId, aiClubCommand.period, logger, progressStatus);
+        return;
+      }
+
+      // Check for /ai_report command
+      const aiReportCommand = parseAiReportCommand(messageText, botUsername);
+      if (aiReportCommand) {
+        await runAiReportAnalysis(ctx, chatId, aiReportCommand.period, logger, progressStatus);
         return;
       }
 
@@ -794,6 +809,20 @@ function parseAiClubCommand(
   return { period: period as "today" | "week" };
 }
 
+function parseAiReportCommand(
+  messageText: string,
+  botUsername?: string,
+): { period: "today" | "week" } | null {
+  const trimmed = messageText.trim();
+  const match = /^\/ai_report(?:@([a-z0-9_]+))?$/i.exec(trimmed);
+  if (!match) return null;
+  const mentioned = match[1];
+  if (mentioned && botUsername && mentioned.toLowerCase() !== botUsername) {
+    return null;
+  }
+  return { period: "today" };
+}
+
 async function runAiClubAnalysis(
   ctx: Context,
   chatId: number,
@@ -879,6 +908,63 @@ async function runAiClubAnalysis(
     pipelineLog(5, "📤", "Sending simplified summary to Telegram...");
     await editTelegramMessage(ctx.api, { chatId: statusChatId!, messageId: statusMessageId }, resultMessage);
     pipelineLog(6, "✅", "Report delivered successfully!");
+
+  } catch (error) {
+    pipelineLog(99, "💥", `Pipeline FAILED: ${error instanceof Error ? error.message : String(error)}`);
+    const errorText = error instanceof Error ? error.message : String(error);
+    if (statusChatId && statusMessageId) {
+      await editTelegramMessage(ctx.api, { chatId: statusChatId, messageId: statusMessageId }, `❌ Ошибка: ${errorText}`);
+    }
+  }
+}
+
+async function runAiReportAnalysis(
+  ctx: Context,
+  chatId: number,
+  period: "today" | "week",
+  logger: ReturnType<typeof getChildLogger>,
+  statusMessage?: StatusMessage | null,
+): Promise<void> {
+  const pipelineStartTime = Date.now();
+  const pipelineLog = (step: number | string, emoji: string, message: string) => {
+    const timestamp = new Date().toISOString().slice(11, 23);
+    const elapsed = Date.now() - pipelineStartTime;
+    const elapsedStr = elapsed < 1000 ? `+${elapsed}ms` : `+${(elapsed / 1000).toFixed(1)}s`;
+    console.log(`[ai-report] ${timestamp} │ ${elapsedStr.padStart(8)} │ ${emoji} STEP ${step} │ ${message}`);
+  };
+
+  pipelineLog(1, "📥", `Received /ai_report command (period: ${period})`);
+
+  let statusChatId: number | undefined = statusMessage?.chatId;
+  let statusMessageId: number | undefined = statusMessage?.messageId;
+
+  try {
+    if (!statusMessageId) {
+      const statusMsg = await ctx.reply("⚙️ Генерирую AI Report...");
+      statusChatId = ctx.chat?.id;
+      statusMessageId = statusMsg.message_id;
+    } else {
+      await editTelegramMessage(ctx.api, { chatId: statusChatId!, messageId: statusMessageId }, "⚙️ Собираю данные...");
+    }
+
+    pipelineLog(2, "🔍", `Fetching ${period} data and generating report...`);
+    const report = await getAiReport(period);
+
+    if (!report) {
+      pipelineLog(3, "❌", "Failed to generate AI report");
+      const errorMsg = "✂︎ Не удалось создать отчёт AI Report. Проверьте логи.";
+      await editTelegramMessage(ctx.api, { chatId: statusChatId!, messageId: statusMessageId }, errorMsg);
+      return;
+    }
+
+    pipelineLog(4, "📤", "Sending report to Telegram...");
+
+    // Send the pre-formatted report summary
+    await editTelegramMessage(ctx.api, { chatId: statusChatId!, messageId: statusMessageId }, report.summary, {
+      parse_mode: "Markdown",
+    });
+
+    pipelineLog(5, "✅", "Report delivered successfully!");
 
   } catch (error) {
     pipelineLog(99, "💥", `Pipeline FAILED: ${error instanceof Error ? error.message : String(error)}`);
