@@ -15,6 +15,7 @@ import { sanitizeToolResultImages } from "./tool-images.js";
 import { runExec } from "../process/exec.js";
 
 const ASK_GEMINI_CLI = "/home/almaz/TOOLS/ask_cli_agents/ask_gemini";
+const KIMI_CLI = "/home/almaz/TOOLS/ask_cli_agents/ask_kimi";
 
 // TODO(steipete): Remove this wrapper once pi-mono ships file-magic MIME detection
 // for `read` image payloads in `@mariozechner/pi-coding-agent` (then switch back to `codingTools` directly).
@@ -612,6 +613,66 @@ function createAskGeminiCollectionTool(): AnyAgentTool {
   };
 }
 
+function createAskKimiTool(): AnyAgentTool {
+  return {
+    label: "Ask Kimi",
+    name: "ask_kimi",
+    description:
+      "Спроси кими, ask_kimi, /kimi - AI queries with Kimi and dynamic mindsets. Supports: codereview, arch, debug, research, critical, project, ux, docs",
+    parameters: Type.Object({
+      prompt: Type.String({
+        description: "Запрос для Kimi AI",
+      }),
+      mindset: Type.Optional(
+        Type.String({
+          description: "Persona/mindset: codereview, arch, debug, research, critical, project, ux, docs",
+        }),
+      ),
+      thinking: Type.Optional(
+        Type.Boolean({
+          description: "Enable thinking mode (default: true)",
+          default: true,
+        }),
+      ),
+      timeout: Type.Optional(
+        Type.Number({
+          description: "Timeout in seconds (default: 60)",
+        }),
+      ),
+    }),
+    execute: async (_toolCallId: string, args: unknown) => {
+      const { prompt, mindset, thinking, timeout } = args as {
+        prompt: string;
+        mindset?: string;
+        thinking?: boolean;
+        timeout?: number;
+      };
+
+      try {
+        const cliArgs: string[] = ["-c", prompt];
+        if (mindset) cliArgs.push("--mindset", mindset);
+        if (thinking === false) cliArgs.push("--no-thinking");
+        if (timeout) cliArgs.push("--timeout", String(timeout));
+
+        const result = await runExec(KIMI_CLI, cliArgs, {
+          timeoutMs: (timeout ?? 60) * 1000,
+        });
+        return {
+          content: [{ type: "text", text: result.stdout || result.stderr }],
+          details: {},
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `Error: ${String(error)}` },
+          ],
+          details: {},
+        };
+      }
+    },
+  };
+}
+
 export function createClawdisCodingTools(options?: {
   bash?: BashToolDefaults & ProcessToolDefaults;
 }): AnyAgentTool[] {
@@ -638,6 +699,7 @@ export function createClawdisCodingTools(options?: {
     createAskGeminiDeepDiveTool(),
     createAskGeminiPdfTool(),
     createAskGeminiCollectionTool(),
+    createAskKimiTool(),
   ];
   return tools.map(normalizeToolParameters);
 }
