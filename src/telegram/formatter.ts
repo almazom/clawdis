@@ -61,10 +61,21 @@ function stripColorfulEmoji(text: string): string {
  * Format message for Telegram with MarkdownV2
  * 1. Strips colorful emojis
  * 2. Converts to Telegram MarkdownV2 format
+ * NOTE: This escapes ALL markdown - use formatTelegramMarkdown() if you want to preserve user's markdown
  */
 export function formatTelegramMessage(text: string): string {
   const noColorEmoji = stripColorfulEmoji(text);
   return telegramifyMarkdown(noColorEmoji, "escape");
+}
+
+/**
+ * Format message for Telegram preserving user's markdown formatting
+ * Use this when user provides their own markdown (*bold*, **bold**, etc.)
+ */
+export function formatTelegramMarkdown(text: string): string {
+  const noColorEmoji = stripColorfulEmoji(text);
+  // Just strip emojis, preserve user's markdown formatting
+  return noColorEmoji;
 }
 
 /**
