@@ -216,3 +216,6 @@ TASK.md
 gemini.md
 .envrc
 .kitty-theme-local
+
+# Allow tracking completed SDD packages
+!docs/sdd/ask-gemini-integration-sdd/
