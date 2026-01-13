@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "feature": "ask-gemini-integration",
+  "overall_status": "NOT_STARTED",
+  "started_at": null,
+  "completed_at": null,
+  "current_card": null,
+  "agent_session_id": null,
+  "cards": {
+    "01": { "status": "pending", "title": "ADR Documentation", "started_at": null, "completed_at": null, "error": null },
+    "02": { "status": "pending", "title": "Ask Gemini Basic Tool", "started_at": null, "completed_at": null, "error": null },
+    "03": { "status": "pending", "title": "Ask Gemini Web Tool", "started_at": null, "completed_at": null, "error": null },
+    "04": { "status": "pending", "title": "Ask Gemini Deep Dive Tool", "started_at": null, "completed_at": null, "error": null },
+    "05": { "status": "pending", "title": "Ask Gemini PDF Tool", "started_at": null, "completed_at": null, "error": null },
+    "06": { "status": "pending", "title": "Ask Gemini Collection Tool", "started_at": null, "completed_at": null, "error": null },
+    "07": { "status": "pending", "title": "Telegram Collection Keyboard", "started_at": null, "completed_at": null, "error": null },
+    "08": { "status": "pending", "title": "Telegram Collection Menu", "started_at": null, "completed_at": null, "error": null },
+    "09": { "status": "pending", "title": "Telegram Collection Detail", "started_at": null, "completed_at": null, "error": null },
+    "10": { "status": "pending", "title": "Telegram Collection Create", "started_at": null, "completed_at": null, "error": null },
+    "11": { "status": "pending", "title": "Telegram Collection Report", "started_at": null, "completed_at": null, "error": null },
+    "12": { "status": "pending", "title": "Telegram Collection Callback", "started_at": null, "completed_at": null, "error": null },
+    "13": { "status": "pending", "title": "SKILL.md Files", "started_at": null, "completed_at": null, "error": null },
+    "14": { "status": "pending", "title": "E2E Testing", "started_at": null, "completed_at": null, "error": null }
+  },
+  "progress": {
+    "completed": 0,
+    "total": 14,
+    "percentage": 0,
+    "story_points_completed": 0,
+    "story_points_total": 34
+  },
+  "execution_log": []
+}

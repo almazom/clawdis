@@ -112,7 +112,6 @@ test/fixtures/
 docs/project_gathering/
 
 # Deep research working files (generated)
-docs/sdd/
 flows/**/docs/
 .flows/**/docs/
 runs/
