@@ -212,3 +212,8 @@ news_analysis_*.md
 # Task planning files
 task.md
 TASK.md
+
+# Local/Agent files
+gemini.md
+.envrc
+.kitty-theme-local
