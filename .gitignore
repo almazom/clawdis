@@ -112,7 +112,6 @@ test/fixtures/
 docs/project_gathering/
 
 # Deep research working files (generated)
-docs/sdd/
 flows/**/docs/
 .flows/**/docs/
 runs/
@@ -217,3 +216,6 @@ TASK.md
 gemini.md
 .envrc
 .kitty-theme-local
+
+# Allow tracking completed SDD packages
+!docs/sdd/ask-gemini-integration-sdd/
