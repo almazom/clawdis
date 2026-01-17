@@ -140,6 +140,10 @@ export type TelegramConfig = {
   webhookPath?: string;
   /** Enable automatic LLM-based message categorization. Default: false. */
   autoCategorize?: boolean;
+  /** Dry-run podcast generation (skip TTS CLI). Default: false. */
+  podcastDryRun?: boolean;
+  /** Progress update interval for podcast status (seconds). Default: 30. */
+  podcastProgressIntervalSec?: number;
 };
 
 export type DiscordConfig = {
@@ -914,6 +918,8 @@ const ClawdisSchema = z.object({
       webhookSecret: z.string().optional(),
       webhookPath: z.string().optional(),
       autoCategorize: z.boolean().optional(),
+      podcastDryRun: z.boolean().optional(),
+      podcastProgressIntervalSec: z.number().int().positive().optional(),
     })
     .optional(),
   discord: z
@@ -1449,8 +1455,12 @@ function applyTTSEnvOverrides(config: ClawdisConfig): ClawdisConfig {
 function applyTelegramEnvOverrides(config: ClawdisConfig): ClawdisConfig {
   const autoCategorize = process.env.TELEGRAM_AUTO_CATEGORIZE_ENABLED;
   const hasAutoCategorize = autoCategorize !== undefined;
+  const podcastDryRun = process.env.TELEGRAM_PODCAST_DRY_RUN;
+  const podcastProgressIntervalSec = process.env.TELEGRAM_PODCAST_PROGRESS_INTERVAL_SEC;
 
-  if (!hasAutoCategorize) return config;
+  if (!hasAutoCategorize && podcastDryRun === undefined && podcastProgressIntervalSec === undefined) {
+    return config;
+  }
 
   const telegram: TelegramConfig = {
     enabled: config.telegram?.enabled ?? true,
@@ -1463,10 +1473,21 @@ function applyTelegramEnvOverrides(config: ClawdisConfig): ClawdisConfig {
     webhookSecret: config.telegram?.webhookSecret,
     webhookPath: config.telegram?.webhookPath,
     autoCategorize: config.telegram?.autoCategorize ?? false,
+    podcastDryRun: config.telegram?.podcastDryRun ?? false,
+    podcastProgressIntervalSec: config.telegram?.podcastProgressIntervalSec ?? 30,
   };
 
   if (hasAutoCategorize) {
     telegram.autoCategorize = autoCategorize === "true";
+  }
+  if (podcastDryRun !== undefined) {
+    telegram.podcastDryRun = podcastDryRun === "true";
+  }
+  if (podcastProgressIntervalSec !== undefined) {
+    const parsed = parseInt(podcastProgressIntervalSec, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      telegram.podcastProgressIntervalSec = parsed;
+    }
   }
 
   return {
