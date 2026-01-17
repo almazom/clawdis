@@ -161,6 +161,9 @@ scripts/test-*.sh
 repro.test.ts
 reproduction.test.ts
 
+# Podcast-specific test files
+*.podcast.test.ts
+
 # E2E test results (local)
 tests/e2e_web_search_results/
 docs/e2e-telega-v2/
