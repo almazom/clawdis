@@ -1,7 +1,8 @@
 // @ts-nocheck
 import { Buffer } from "node:buffer";
 import { exec, spawn } from "node:child_process";
-import { readFile, writeFile, unlink, mkdir } from "node:fs/promises";
+import type { ChildProcess } from "node:child_process";
+import { readFile, writeFile, unlink, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -65,18 +66,27 @@ import { formatTelegramMessage } from "./formatter.js";
 import { parseMultyCommand } from "../multy/command.js";
 import {
   buildMultyStatusMessage,
+  buildMultyCanceledMessage,
   parseMultyJsonl,
   resolveMultyCurrentStepLabel,
   resolveMultyModels,
 } from "../multy/status.js";
 import { buildMultyResultMessage } from "../multy/result.js";
+import {
+  createMultyCancelButton,
+  parseMultyCancelCallbackData,
+} from "../multy/cancel.js";
 
 const PARSE_ERR_RE =
   /can't parse entities|parse entities|find end of the entity/i;
 const MESSAGE_NOT_MODIFIED_RE = /message is not modified/i;
 const deepResearchInFlight = new Set<number>();
 const webSearchInFlight = new Set<number>();
+const multyInFlight = new Set<number>();
+const multyRuns = new Map<string, MultyRun>();
+const MULTY_LOCK_DIR = "/tmp/clawdis";
 const MULTY_STATUS_INTERVAL_MS = 30_000;
+const MULTY_CANCEL_KILL_TIMEOUT_MS = 10_000;
 
 // TTS in-flight tracking with TTL (5 minutes)
 const ttsInFlight = new Map<string, number>();
@@ -106,6 +116,19 @@ const AUDIO_STATUS_DONE = "● Готово";
 type StatusMessage = {
   chatId: number;
   messageId: number;
+};
+
+type MultyRun = {
+  runId: string;
+  chatId: number;
+  topic: string;
+  ownerId?: number;
+  statusMessage: StatusMessage;
+  child: ChildProcess;
+  models: string[];
+  startedAt: number;
+  cancelRequested: boolean;
+  stopUpdates: () => void;
 };
 
 type TelegramMessage = Message.CommonMessage;
@@ -177,23 +200,13 @@ export function createTelegramBot(opts: TelegramBotOptions) {
         return;
       }
 
-      if (!isWebCommand && !isAiClubCommand) {
+      if (!isWebCommand && !isAiClubCommand && !isMultyCommand) {
         try {
           let initialAck = "🤔 Думаю...";
           if (msg.photo) initialAck = "📸 Вижу фото, сейчас посмотрю...";
           else if (msg.video) initialAck = "🎥 Вижу видео, сейчас изучу...";
           else if (msg.voice || msg.audio) initialAck = "🎙️ Слушаю аудио...";
           else if (msg.document) initialAck = "📂 Вижу файл, сейчас проверю...";
-          if (isMultyCommand && multyCommand) {
-            initialAck = buildMultyStatusMessage({
-              topic: multyCommand.topic || "(missing topic)",
-              models: resolveMultyModels(),
-              elapsedSeconds: 0,
-              steps: {},
-              notifyEnabled: false,
-            });
-          }
-
           const status = await ctx.reply(initialAck);
           progressStatus = {
             chatId: ctx.chat?.id ?? chatId,
@@ -365,6 +378,27 @@ export function createTelegramBot(opts: TelegramBotOptions) {
           { chatId, topic: multyCommand.topic },
           "telegram /multy command received",
         );
+        const lock = await readMultyLock(chatId);
+        if (lock?.active) {
+          const busyText =
+            "⏸️ Уже выполняется /multy. Дождитесь завершения текущего запуска.";
+          if (progressStatus) {
+            await editTelegramMessage(ctx.api, progressStatus, busyText);
+          } else {
+            await ctx.reply(busyText);
+          }
+          return;
+        }
+        if (multyInFlight.has(chatId)) {
+          const busyText =
+            "⏸️ Уже выполняется /multy. Дождитесь завершения текущего запуска.";
+          if (progressStatus) {
+            await editTelegramMessage(ctx.api, progressStatus, busyText);
+          } else {
+            await ctx.reply(busyText);
+          }
+          return;
+        }
         if (!multyCommand.topic) {
           if (progressStatus) {
             await editTelegramMessage(
@@ -526,9 +560,12 @@ export function createTelegramBot(opts: TelegramBotOptions) {
 
   // Deep Research and TTS button callback handler
   bot.on("callback_query:data", async (ctx, next) => {
-    const handled = await handleDeepResearchCallback(ctx, runtime);
-    if (!handled) {
-      await handleTTSCallback(ctx, runtime);
+    const multyHandled = await handleMultyCancelCallback(ctx, runtime);
+    if (!multyHandled) {
+      const handled = await handleDeepResearchCallback(ctx, runtime);
+      if (!handled) {
+        await handleTTSCallback(ctx, runtime);
+      }
     }
     if (next) await next();
   });
@@ -1365,6 +1402,41 @@ async function editTelegramMessage(
   }
 }
 
+async function editTelegramMessageHtml(
+  api: Bot["api"],
+  statusMessage: StatusMessage,
+  text: string,
+): Promise<void> {
+  try {
+    await api.editMessageText(statusMessage.chatId, statusMessage.messageId, text, {
+      parse_mode: "HTML",
+    });
+  } catch (err) {
+    const errText = formatErrorMessage(err);
+    if (MESSAGE_NOT_MODIFIED_RE.test(errText)) {
+      return;
+    }
+    throw err;
+  }
+}
+
+async function clearTelegramReplyMarkup(
+  api: Bot["api"],
+  statusMessage: StatusMessage,
+): Promise<void> {
+  try {
+    await api.editMessageReplyMarkup(
+      statusMessage.chatId,
+      statusMessage.messageId,
+    );
+  } catch (err) {
+    const errText = formatErrorMessage(err);
+    if (MESSAGE_NOT_MODIFIED_RE.test(errText)) {
+      return;
+    }
+  }
+}
+
 async function runMultyPipeline(params: {
   ctx: Context;
   chatId: number;
@@ -1373,22 +1445,29 @@ async function runMultyPipeline(params: {
   logger: ReturnType<typeof getChildLogger>;
 }): Promise<void> {
   const { ctx, chatId, topic, logger } = params;
+  await ensureMultyLockDir();
+  await writeMultyLock(chatId, topic);
+  multyInFlight.add(chatId);
   let statusMessage = params.statusMessage;
   const workspace = process.cwd();
   const tmpRoot = join(workspace, "tmp");
   await mkdir(tmpRoot, { recursive: true });
   const publishEnabled = true;
   const notifyEnabled = false;
-  const jsonLogPath = join(
-    tmpRoot,
-    `multy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jsonl`,
-  );
+  const ownerId = ctx.from?.id;
+  const runId = `multy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const jsonLogPath = join(tmpRoot, `${runId}.jsonl`);
   const env = { ...process.env };
   if (!env.ASK_CLI_AGENTS_ROOT) {
     env.ASK_CLI_AGENTS_ROOT = "/home/almaz/TOOLS/ask_cli_agents";
   }
+  const homeDir = env.HOME || "/home/almaz";
+  const extraPaths = [join(homeDir, "bin"), join(homeDir, ".local", "bin")];
+  env.PATH = [...extraPaths, env.PATH ?? ""].filter(Boolean).join(":");
+  const multyBin = env.MULTY_BIN?.trim() || "multy";
   const models = resolveMultyModels(env);
   const startMs = Date.now();
+  const cancelButton = createMultyCancelButton({ runId, ownerId });
 
   if (!statusMessage) {
     const initial = buildMultyStatusMessage({
@@ -1399,15 +1478,62 @@ async function runMultyPipeline(params: {
       publishEnabled,
       notifyEnabled,
     });
-    const status = await ctx.reply(initial);
+    const status = await ctx.reply(initial, {
+      parse_mode: "HTML",
+      reply_markup: cancelButton,
+    });
     statusMessage = { chatId: ctx.chat?.id ?? chatId, messageId: status.message_id };
+  } else {
+    try {
+      await ctx.api.editMessageReplyMarkup(
+        statusMessage.chatId,
+        statusMessage.messageId,
+        { reply_markup: cancelButton },
+      );
+    } catch (err) {
+      logVerbose(`multy cancel button attach failed: ${String(err)}`);
+    }
   }
 
   const child = spawn(
-    "multy",
+    multyBin,
     ["--theme", "silent", "--json-log", jsonLogPath, "--workspace", workspace, topic],
     { env, cwd: workspace },
   );
+
+  let interval: NodeJS.Timer | null = null;
+  const stopUpdates = () => {
+    if (interval) {
+      clearInterval(interval);
+      interval = null;
+    }
+  };
+
+  const hasStatusMessage = Boolean(statusMessage);
+  if (!statusMessage) {
+    logger.error(
+      { topic },
+      "multy status message missing; proceeding without status updates",
+    );
+  }
+
+  const run: MultyRun | null = hasStatusMessage
+    ? {
+        runId,
+        chatId,
+        topic,
+        ownerId,
+        statusMessage: statusMessage!,
+        child,
+        models,
+        startedAt: startMs,
+        cancelRequested: false,
+        stopUpdates,
+      }
+    : null;
+  if (run) {
+    multyRuns.set(runId, run);
+  }
 
   let stdout = "";
   let stderr = "";
@@ -1429,6 +1555,7 @@ async function runMultyPipeline(params: {
 
   const updateStatus = async () => {
     if (!statusMessage) return;
+    if (run?.cancelRequested) return;
     const steps = await readSteps();
     const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
     const text = buildMultyStatusMessage({
@@ -1439,10 +1566,10 @@ async function runMultyPipeline(params: {
       publishEnabled,
       notifyEnabled,
     });
-    await editTelegramMessage(ctx.api, statusMessage, text);
+    await editTelegramMessageHtml(ctx.api, statusMessage, text);
   };
 
-  const interval = setInterval(() => {
+  interval = setInterval(() => {
     updateStatus().catch((err) => {
       logVerbose(`multy status update failed: ${String(err)}`);
     });
@@ -1450,82 +1577,202 @@ async function runMultyPipeline(params: {
 
   await updateStatus();
 
-  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (resolve) => {
-      child.on("close", (code, signal) => resolve({ code, signal }));
-    },
-  );
-
-  clearInterval(interval);
-
-  const steps = await readSteps();
-  const combinedOutput = `${stdout}\n${stderr}`.trim();
-  const summary = extractMultySummary(combinedOutput);
-
-  if (exit.code !== 0) {
-    const stepLabel = resolveMultyCurrentStepLabel(steps, {
-      publishEnabled,
-      notifyEnabled,
+  try {
+    const exit = await new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+      error?: Error;
+    }>((resolve) => {
+      let settled = false;
+      const finish = (payload: {
+        code: number | null;
+        signal: NodeJS.Signals | null;
+        error?: Error;
+      }) => {
+        if (settled) return;
+        settled = true;
+        resolve(payload);
+      };
+      child.once("close", (code, signal) => finish({ code, signal }));
+      child.once("error", (error) => finish({ code: null, signal: null, error }));
     });
-    const reason = extractMultyErrorReason(combinedOutput) ?? "unknown error";
-    const failureText = [
-      "[Multy pipeline failed]",
-      "",
-      `Topic: "${topic}"`,
-      `Step: ${stepLabel}`,
-      `Reason: ${reason}`,
-    ].join("\n");
-    if (statusMessage) {
-      await editTelegramMessage(ctx.api, statusMessage, failureText);
-    } else {
-      await ctx.reply(failureText);
+
+    stopUpdates();
+
+    if (run?.cancelRequested) {
+      const elapsedSeconds = Math.max(
+        0,
+        Math.floor((Date.now() - run.startedAt) / 1000),
+      );
+      if (statusMessage) {
+        const canceledText = buildMultyCanceledMessage({
+          topic,
+          models,
+          elapsedSeconds,
+          reason: "Отменено пользователем.",
+        });
+        await editTelegramMessageHtml(ctx.api, statusMessage, canceledText);
+        await clearTelegramReplyMarkup(ctx.api, statusMessage);
+      }
+      logger.info({ topic, runId }, "multy pipeline canceled");
+      return;
     }
-    logger.error({ topic, code: exit.code, signal: exit.signal }, "multy pipeline failed");
-    return;
-  }
 
-  await updateStatus();
+    const steps = await readSteps();
+    const combinedOutput = `${stdout}\n${stderr}`.trim();
+    const summary = extractMultySummary(combinedOutput);
 
-  if (!summary) {
-    const fallbackText = [
-      "[Multy pipeline done]",
-      "",
-      `Topic: "${topic}"`,
-      "Result: completed, but no summary payload was captured.",
-    ].join("\n");
-    await ctx.reply(formatTelegramMessage(fallbackText), {
+    if (exit.error || exit.code !== 0) {
+      const stepLabel = resolveMultyCurrentStepLabel(steps, {
+        publishEnabled,
+        notifyEnabled,
+      });
+      const errorCode = (exit.error as NodeJS.ErrnoException | undefined)?.code;
+      const reason = exit.error
+        ? errorCode === "ENOENT"
+          ? "multy CLI not found in PATH. Install it or set MULTY_BIN/PATH."
+          : formatErrorMessage(exit.error)
+        : extractMultyErrorReason(combinedOutput) ?? "unknown error";
+      const failureText = [
+        "[Multy pipeline failed]",
+        "",
+        `Topic: "${topic}"`,
+        `Step: ${stepLabel}`,
+        `Reason: ${reason}`,
+      ].join("\n");
+      if (statusMessage) {
+        await editTelegramMessage(ctx.api, statusMessage, failureText);
+      } else {
+        await ctx.reply(failureText);
+      }
+      logger.error(
+        { topic, code: exit.code, signal: exit.signal, reason },
+        "multy pipeline failed",
+      );
+      if (statusMessage) {
+        await clearTelegramReplyMarkup(ctx.api, statusMessage);
+      }
+      return;
+    }
+
+    await updateStatus();
+
+    if (!summary) {
+      const fallbackText = [
+        "[Multy pipeline done]",
+        "",
+        `Topic: "${topic}"`,
+        "Result: completed, but no summary payload was captured.",
+      ].join("\n");
+      await ctx.reply(formatTelegramMessage(fallbackText), {
+        parse_mode: "MarkdownV2",
+      });
+      if (statusMessage) {
+        await clearTelegramReplyMarkup(ctx.api, statusMessage);
+      }
+      return;
+    }
+
+    let articleMarkdown = "";
+    const articlePath = String(summary.article_ru_path || "").trim();
+    if (articlePath) {
+      try {
+        articleMarkdown = await readFile(articlePath, "utf8");
+      } catch (err) {
+        logVerbose(`multy article read failed: ${String(err)}`);
+      }
+    }
+
+    const articleUrl =
+      typeof summary.article_url === "string"
+        ? summary.article_url.trim()
+        : undefined;
+    const rawUrl =
+      typeof summary.raw_url === "string" ? summary.raw_url.trim() : undefined;
+    const resultLines = buildMultyResultMessage({
+      summary: {
+        prompt: summary.prompt as string | undefined,
+        article_url: articleUrl,
+        raw_url: rawUrl,
+        run_metadata_path: summary.run_metadata_path as string | undefined,
+      },
+      topic,
+      articleMarkdown,
+      showRunPath: false,
+    });
+
+    await ctx.reply(formatTelegramMessage(resultLines), {
       parse_mode: "MarkdownV2",
+      disable_web_page_preview: !articleUrl,
     });
-    return;
-  }
-
-  let articleMarkdown = "";
-  const articlePath = String(summary.article_ru_path || "").trim();
-  if (articlePath) {
-    try {
-      articleMarkdown = await readFile(articlePath, "utf8");
-    } catch (err) {
-      logVerbose(`multy article read failed: ${String(err)}`);
+    if (statusMessage) {
+      await clearTelegramReplyMarkup(ctx.api, statusMessage);
     }
+  } finally {
+    stopUpdates();
+    if (run) {
+      multyRuns.delete(runId);
+    }
+    multyInFlight.delete(chatId);
+    await clearMultyLock(chatId);
   }
+}
 
-  const totalSeconds = Math.round((summary.total_duration_ms ?? 0) / 1000);
-  const resultLines = buildMultyResultMessage({
-    summary: {
-      prompt: summary.prompt as string | undefined,
-      article_url: summary.article_url as string | undefined,
-      raw_url: summary.raw_url as string | undefined,
-      run_metadata_path: summary.run_metadata_path as string | undefined,
-    },
+async function ensureMultyLockDir(): Promise<void> {
+  await mkdir(MULTY_LOCK_DIR, { recursive: true });
+}
+
+function multyLockPath(chatId: number): string {
+  return join(MULTY_LOCK_DIR, `multy-${chatId}.lock`);
+}
+
+async function readMultyLock(chatId: number): Promise<{
+  active: boolean;
+  pid?: number;
+}> {
+  const path = multyLockPath(chatId);
+  try {
+    await stat(path);
+  } catch {
+    return { active: false };
+  }
+  try {
+    const raw = await readFile(path, "utf8");
+    const payload = JSON.parse(raw) as { pid?: number };
+    if (payload.pid && isProcessAlive(payload.pid)) {
+      return { active: true, pid: payload.pid };
+    }
+  } catch {
+    return { active: true };
+  }
+  await clearMultyLock(chatId);
+  return { active: false };
+}
+
+async function writeMultyLock(chatId: number, topic: string): Promise<void> {
+  const payload = {
+    pid: process.pid,
     topic,
-    articleMarkdown,
-    showRunPath: false,
-  });
+    startedAt: Date.now(),
+  };
+  await writeFile(multyLockPath(chatId), JSON.stringify(payload), "utf8");
+}
 
-  await ctx.reply(formatTelegramMessage(resultLines), {
-    parse_mode: "MarkdownV2",
-    disable_web_page_preview: true,
-  });
+async function clearMultyLock(chatId: number): Promise<void> {
+  try {
+    await unlink(multyLockPath(chatId));
+  } catch {
+    // ignore
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function extractMultySummary(output: string): Record<string, unknown> | null {
@@ -1561,6 +1808,89 @@ function formatSeconds(totalSeconds: number): string {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes}m ${seconds}s`;
+}
+
+async function handleMultyCancelCallback(
+  ctx: Context,
+  runtime: RuntimeEnv,
+): Promise<boolean> {
+  const data = ctx.callbackQuery?.data;
+  if (!data) return false;
+  const parsed = parseMultyCancelCallbackData(data);
+  if (!parsed) return false;
+
+  const run = multyRuns.get(parsed.runId);
+  if (!run) {
+    await ctx.answerCallbackQuery({ text: "Уже неактуально." });
+    return true;
+  }
+
+  if (ctx.chat?.id && ctx.chat.id !== run.chatId) {
+    await ctx.answerCallbackQuery({ text: "Неверный чат." });
+    return true;
+  }
+
+  const callerId = ctx.from?.id;
+  if (parsed.ownerId !== undefined && callerId !== parsed.ownerId) {
+    await ctx.answerCallbackQuery({ text: "Недостаточно прав для отмены." });
+    return true;
+  }
+
+  if (run.cancelRequested) {
+    await ctx.answerCallbackQuery({ text: "Отмена уже запрошена." });
+    return true;
+  }
+  if (run.child.exitCode !== null || run.child.signalCode) {
+    await ctx.answerCallbackQuery({ text: "Уже завершено." });
+    try {
+      await clearTelegramReplyMarkup(ctx.api, run.statusMessage);
+    } catch {
+      // ignore
+    }
+    return true;
+  }
+
+  run.cancelRequested = true;
+  run.stopUpdates();
+
+  await ctx.answerCallbackQuery({ text: "Мультисэмплинг отменен." });
+
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((Date.now() - run.startedAt) / 1000),
+  );
+  const canceledText = buildMultyCanceledMessage({
+    topic: run.topic,
+    models: run.models,
+    elapsedSeconds,
+    reason: "Отменено пользователем.",
+  });
+  try {
+    await editTelegramMessageHtml(ctx.api, run.statusMessage, canceledText);
+    await clearTelegramReplyMarkup(ctx.api, run.statusMessage);
+  } catch (err) {
+    logVerbose(`multy cancel status update failed: ${String(err)}`);
+  }
+
+  try {
+    run.child.kill("SIGTERM");
+    const killTimer = setTimeout(() => {
+      try {
+        if (!run.child.killed) {
+          run.child.kill("SIGKILL");
+        }
+      } catch {
+        // ignore
+      }
+    }, MULTY_CANCEL_KILL_TIMEOUT_MS);
+    if (typeof killTimer.unref === "function") {
+      killTimer.unref();
+    }
+  } catch (err) {
+    runtime.error?.(danger(`Failed to cancel multy: ${String(err)}`));
+  }
+
+  return true;
 }
 
 async function handleDeepResearchCallback(
