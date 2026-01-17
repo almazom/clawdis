@@ -38,8 +38,12 @@ export function buildMultyResultMessage(params: {
   const sections = parseSections(articleMarkdown);
   const summaryText =
     summaryOverride ??
-    extractFirstParagraph(sections["Главная идея"] ?? []) ??
-    extractFirstParagraph(findFirstSectionParagraphs(sections)) ??
+    compressSummary(
+      extractFirstParagraph(sections["Главная идея"] ?? []) ??
+        extractFirstParagraph(findFirstSectionParagraphs(sections)) ??
+        "",
+      3,
+    ) ??
     "Краткое содержание недоступно.";
   const bullets = extractBullets(sections);
   const topics = bullets.slice(0, 4);
@@ -51,30 +55,32 @@ export function buildMultyResultMessage(params: {
   const lines: string[] = [
     `*Тема: ${title}*`,
     "",
-    "│",
     "Краткое содержание:",
     "",
     summaryText,
     "",
-    "│",
     "Темы:",
     "",
     ...formatNumbered(fallbackTopics, ["①", "②", "③", "④", "⑤"]),
     "",
-    ...formatNumbered(fallbackInsights, ["❶", "❷", "❸", "❹", "❺"]),
+    ...formatNumbered(fallbackInsights, ["○", "○", "○", "○", "○"]),
   ];
 
+  const linkLines: string[] = [];
   if (summary.article_url) {
-    lines.push("", `Статья: ${summary.article_url}`);
+    linkLines.push(`Статья: ${summary.article_url}`);
   }
   if (summary.raw_url) {
-    lines.push(`Сырые ответы: ${summary.raw_url}`);
+    linkLines.push(`[Сырые ответы](${summary.raw_url})`);
+  }
+  if (linkLines.length > 0) {
+    lines.push("", ...linkLines);
   }
   if (showRunPath && summary.run_metadata_path) {
     lines.push(`🧾 Run: ${summary.run_metadata_path}`);
   }
 
-  return `[${lines.join("\n")}]`;
+  return lines.join("\n");
 }
 
 function extractTitle(markdown: string): string | null {
@@ -170,8 +176,24 @@ function fallbackSentenceInsights(summaryText: string): string[] {
 }
 
 function formatNumbered(items: string[], symbols: string[]): string[] {
-  return items.slice(0, symbols.length).map((item, index) => {
+  const lines = items.slice(0, Math.min(4, symbols.length)).map((item, index) => {
     const symbol = symbols[index] ?? "○";
     return `${symbol} ${item}`;
   });
+  const spaced: string[] = [];
+  for (const line of lines) {
+    if (spaced.length > 0) spaced.push("");
+    spaced.push(line);
+  }
+  return spaced;
+}
+
+function compressSummary(text: string, maxSentences: number): string | null {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return sentences.slice(0, Math.max(2, Math.min(maxSentences, 3))).join(" ");
 }
