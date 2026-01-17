@@ -19,6 +19,7 @@ type TelegramSendResult = {
 
 const PARSE_ERR_RE =
   /can't parse entities|parse entities|find end of the entity/i;
+const TELEGRAM_PARSE_MODE = "MarkdownV2" as const;
 
 function resolveToken(explicit?: string): string {
   const token = explicit ?? process.env.TELEGRAM_BOT_TOKEN;
@@ -115,6 +116,10 @@ export async function sendMessageTelegram(
       media.fileName ?? inferFilename(kind) ?? "file",
     );
     const caption = text?.trim() || undefined;
+    const captionOptions = caption
+      ? { caption, parse_mode: TELEGRAM_PARSE_MODE }
+      : { caption };
+    const captionPlainOptions = caption ? { caption } : { caption };
     let result:
       | Awaited<ReturnType<typeof api.sendPhoto>>
       | Awaited<ReturnType<typeof api.sendVideo>>
@@ -122,30 +127,86 @@ export async function sendMessageTelegram(
       | Awaited<ReturnType<typeof api.sendDocument>>;
     if (kind === "image") {
       result = await sendWithRetry(
-        () => api.sendPhoto(chatId, file, { caption }),
+        () => api.sendPhoto(chatId, file, captionOptions),
         "photo",
-      ).catch((err) => {
+      ).catch(async (err) => {
+        const errText = formatErrorMessage(err);
+        if (caption && PARSE_ERR_RE.test(errText)) {
+          if (opts.verbose) {
+            console.warn(
+              `telegram markdown parse failed, retrying photo caption as plain text: ${errText}`,
+            );
+          }
+          return await sendWithRetry(
+            () => api.sendPhoto(chatId, file, captionPlainOptions),
+            "photo-plain",
+          ).catch((err2) => {
+            throw wrapChatNotFound(err2);
+          });
+        }
         throw wrapChatNotFound(err);
       });
     } else if (kind === "video") {
       result = await sendWithRetry(
-        () => api.sendVideo(chatId, file, { caption }),
+        () => api.sendVideo(chatId, file, captionOptions),
         "video",
-      ).catch((err) => {
+      ).catch(async (err) => {
+        const errText = formatErrorMessage(err);
+        if (caption && PARSE_ERR_RE.test(errText)) {
+          if (opts.verbose) {
+            console.warn(
+              `telegram markdown parse failed, retrying video caption as plain text: ${errText}`,
+            );
+          }
+          return await sendWithRetry(
+            () => api.sendVideo(chatId, file, captionPlainOptions),
+            "video-plain",
+          ).catch((err2) => {
+            throw wrapChatNotFound(err2);
+          });
+        }
         throw wrapChatNotFound(err);
       });
     } else if (kind === "audio") {
       result = await sendWithRetry(
-        () => api.sendAudio(chatId, file, { caption }),
+        () => api.sendAudio(chatId, file, captionOptions),
         "audio",
-      ).catch((err) => {
+      ).catch(async (err) => {
+        const errText = formatErrorMessage(err);
+        if (caption && PARSE_ERR_RE.test(errText)) {
+          if (opts.verbose) {
+            console.warn(
+              `telegram markdown parse failed, retrying audio caption as plain text: ${errText}`,
+            );
+          }
+          return await sendWithRetry(
+            () => api.sendAudio(chatId, file, captionPlainOptions),
+            "audio-plain",
+          ).catch((err2) => {
+            throw wrapChatNotFound(err2);
+          });
+        }
         throw wrapChatNotFound(err);
       });
     } else {
       result = await sendWithRetry(
-        () => api.sendDocument(chatId, file, { caption }),
+        () => api.sendDocument(chatId, file, captionOptions),
         "document",
-      ).catch((err) => {
+      ).catch(async (err) => {
+        const errText = formatErrorMessage(err);
+        if (caption && PARSE_ERR_RE.test(errText)) {
+          if (opts.verbose) {
+            console.warn(
+              `telegram markdown parse failed, retrying document caption as plain text: ${errText}`,
+            );
+          }
+          return await sendWithRetry(
+            () => api.sendDocument(chatId, file, captionPlainOptions),
+            "document-plain",
+          ).catch((err2) => {
+            throw wrapChatNotFound(err2);
+          });
+        }
         throw wrapChatNotFound(err);
       });
     }
@@ -157,7 +218,8 @@ export async function sendMessageTelegram(
     throw new Error("Message must be non-empty for Telegram sends");
   }
   const res = await sendWithRetry(
-    () => api.sendMessage(chatId, text, { parse_mode: "Markdown" }),
+    () =>
+      api.sendMessage(chatId, text, { parse_mode: TELEGRAM_PARSE_MODE }),
     "message",
   ).catch(async (err) => {
     // Telegram rejects malformed Markdown (e.g., unbalanced '_' or '*').

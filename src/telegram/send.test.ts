@@ -26,7 +26,7 @@ describe("sendMessageTelegram", () => {
     });
 
     expect(sendMessage).toHaveBeenNthCalledWith(1, chatId, "_oops_", {
-      parse_mode: "Markdown",
+      parse_mode: "MarkdownV2",
     });
     expect(sendMessage).toHaveBeenNthCalledWith(2, chatId, "_oops_");
     expect(res.chatId).toBe(chatId);
@@ -48,7 +48,7 @@ describe("sendMessageTelegram", () => {
     });
 
     expect(sendMessage).toHaveBeenCalledWith("123", "hi", {
-      parse_mode: "Markdown",
+      parse_mode: "MarkdownV2",
     });
   });
 
