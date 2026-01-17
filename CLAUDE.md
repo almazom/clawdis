@@ -57,6 +57,10 @@ If confidence < 95%, run full restart:
 restart-ai
 ```
 
+### Telegram E2E Self-Check
+
+Before asking a user to manually verify Telegram output/formatting, run a telega_v2 E2E check yourself and validate against the relevant spec/template for the task. Only request manual confirmation if the E2E tool is blocked or unavailable.
+
 ### Files
 
 | File | Purpose |
