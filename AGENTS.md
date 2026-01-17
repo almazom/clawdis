@@ -54,6 +54,7 @@ The tool provides a confidence score (0-100%) based on:
 - Ensure the gateway is running and the Telegram allowlist is configured (`telegram.allowFrom`) with a matching `TELEGRAM_BOT_TOKEN` in `.env`.
 - Run: `pnpm clawdis agent --message "test" --provider telegram --to <TELEGRAM_ID> --deliver`
 - Expect a reply in Telegram; check `/tmp/clawdis/clawdis-YYYY-MM-DD.log` if it fails.
+- Before asking the user to manually validate Telegram output, run a telega_v2 E2E check yourself and compare against the relevant spec/template for the task. Only ask for manual confirmation if the E2E tool is blocked or unavailable.
 
 ## Telegram Auto-Categorization
 - Automatic LLM-based message categorization (web search, deep research, none) is **disabled by default**.
