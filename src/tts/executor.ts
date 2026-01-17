@@ -2,6 +2,7 @@
  * TTS CLI Executor
  */
 
+import { Buffer } from "node:buffer";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -32,12 +33,13 @@ export async function executeTTS(
   options: ExecuteTTSOptions = {}
 ): Promise<ExecuteTTSResult> {
   const cfg = loadConfig();
+  const ttsCliConfig = cfg.ttsCli;
   const {
-    timeoutMs = 300000, // 5 minutes for full pipeline
+    timeoutMs = ttsCliConfig?.timeoutMs ?? 300000, // 5 minutes for full pipeline
     dryRun = false,
-    speaker1 = "Alex",
-    speaker2 = "Sarah",
-    outputDir = "./output",
+    speaker1 = ttsCliConfig?.defaultSpeaker1 ?? "Alex",
+    speaker2 = ttsCliConfig?.defaultSpeaker2 ?? "Sarah",
+    outputDir = ttsCliConfig?.outputDir ?? "./output",
   } = options;
 
   // Validate topic
@@ -64,7 +66,8 @@ export async function executeTTS(
       "tts_cli.sh"
     );
 
-    const cliPath = options.cliPath || defaultTTSCli;
+    const cliPath = options.cliPath || ttsCliConfig?.cliPath || defaultTTSCli;
+    await fs.promises.mkdir(outputDir, { recursive: true }).catch(() => {});
 
     if (!fs.existsSync(cliPath)) {
       return {
@@ -74,21 +77,29 @@ export async function executeTTS(
     }
 
     if (dryRun) {
+      const placeholderPath = path.join(outputDir, `dry_run_podcast_${Date.now()}.mp3`);
+      const placeholderMp3Base64 =
+        "SUQzAwAAAAAAFlRFTkMAAAABAAABAgAAABNzeXN0ZW0AAAAbAAABAEF1ZGlvIEZpbGUgR2VuZXJhdGVkIGJ5IENMQVdESVM=";
+      const placeholderMp3 = Buffer.from(placeholderMp3Base64, "base64");
+      await fs.promises.writeFile(placeholderPath, placeholderMp3);
       return {
         success: true,
-        audioPath: `${outputDir}/dry_run_podcast.mp3`,
-        scriptPath: `${outputDir}/dry_run_script.txt`,
-        durationSec: 300
+        audioPath: placeholderPath,
+        durationSec: 5
       };
     }
 
     // Build command arguments
+    const outputPath = path.join(
+      outputDir,
+      `telegram_podcast_${Date.now()}.mp3`,
+    );
     const args = [
       "podcast",
       topic,
       "--speaker1", speaker1,
       "--speaker2", speaker2,
-      "--output", `${outputDir}/telegram_podcast_${Date.now()}.mp3`
+      "--output", outputPath,
     ];
 
     console.log(`[tts] Executing: ${cliPath} ${args.join(" ")}`);
@@ -103,7 +114,23 @@ export async function executeTTS(
 
     // Parse output to find generated files
     const outputMatch = stdout.match(/saved to (.+\.mp3)/i);
-    const audioPath = outputMatch ? outputMatch[1] : undefined;
+    let audioPath = outputMatch ? outputMatch[1] : outputPath;
+    if (!fs.existsSync(audioPath)) {
+      try {
+        const candidates = fs.readdirSync(outputDir)
+          .filter((file) => file.endsWith(".mp3") && file.startsWith("telegram_podcast_"))
+          .map((file) => ({
+            path: path.join(outputDir, file),
+            mtimeMs: fs.statSync(path.join(outputDir, file)).mtimeMs,
+          }))
+          .sort((a, b) => b.mtimeMs - a.mtimeMs);
+        if (candidates[0]) {
+          audioPath = candidates[0].path;
+        }
+      } catch {
+        // ignore lookup failures and keep original path
+      }
+    }
 
     return {
       success: true,
