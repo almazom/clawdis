@@ -217,3 +217,7 @@ TASK.md
 gemini.md
 .envrc
 .kitty-theme-local
+
+# Multy pipeline output
+output/
+tmp/
