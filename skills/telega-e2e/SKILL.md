@@ -9,7 +9,7 @@ Use this skill to run or document the full Telegram endpoint-to-endpoint loop fo
 
 ## Sources of truth
 
-- Read `docs/TELEGA_E2E_PIPELINE.md` for the complete, ordered pipeline and decision loop.
+- Read `docs/Launchpad/TELEGA_E2E_PIPELINE.md` for the complete, ordered pipeline and decision loop.
 
 ## Execute the loop (quick outline)
 
