@@ -221,3 +221,6 @@ gemini.md
 # Multy pipeline output
 output/
 tmp/
+
+# Multy lock files
+/tmp/clawdis/
