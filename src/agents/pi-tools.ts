@@ -314,6 +314,7 @@ export function createClawdisCodingTools(options?: {
     ...createClawdisTools(),
     createWebSearchTool(),
     createWebFetchTool(),
+    createPodcastTool(),
   ];
   return tools.map(normalizeToolParameters);
 }
@@ -539,6 +540,88 @@ export function createWebFetchTool(): AnyAgentTool {
         return {
           content: [
             { type: "text", text: `❌ Ошибка загрузки URL: ${String(error).slice(0, 200)}` },
+          ],
+        };
+      }
+    },
+  } as unknown as AnyAgentTool;
+}
+
+export function createPodcastTool(): AnyAgentTool {
+  return {
+    name: "generate_podcast",
+    description: "Generate a podcast episode from a topic using AI-powered script generation and text-to-speech. Creates an MP3 file with two speakers discussing the topic in Russian.",
+    parameters: Type.Object({
+      topic: Type.String({
+        description: "The topic for the podcast episode. Should be detailed and specific (min 5 characters).",
+        examples: ["Artificial Intelligence in Healthcare", "The Future of Quantum Computing", "History of the Roman Empire"],
+        minLength: 5,
+        maxLength: 500,
+      }),
+      speaker1: Type.Optional(Type.String({
+        description: "Name for the first speaker (default: Alex)",
+        default: "Alex",
+        minLength: 2,
+        maxLength: 50,
+      })),
+      speaker2: Type.Optional(Type.String({
+        description: "Name for the second speaker (default: Sarah)",
+        default: "Sarah",
+        minLength: 2,
+        maxLength: 50,
+      })),
+      duration: Type.Optional(Type.String({
+        description: "Target duration like '3:00', '4:30-5:00', or '5:00' (default: 4:30-5:00)",
+        default: "4:30-5:00",
+        pattern: "^\\d{1,2}:\\d{2}(-\\d{1,2}:\\d{2})?$",
+      })),
+    }),
+    execute: async (_toolCallId: string, args: unknown) => {
+      try {
+        // Import executor dynamically to avoid circular dependencies
+        const { executeTTS } = await import("../tts/executor.js");
+        
+        // Extract parameters with validation
+        const params = args as {
+          topic: string;
+          speaker1?: string;
+          speaker2?: string;
+          duration?: string;
+        };
+        
+        if (!params.topic || params.topic.trim().length < 5) {
+          return {
+            content: [
+              { type: "text", text: "❌ Error: Topic must be at least 5 characters long." },
+            ],
+          };
+        }
+        
+        // Execute podcast generation
+        const result = await executeTTS(params.topic, {
+          speaker1: params.speaker1 || "Alex",
+          speaker2: params.speaker2 || "Sarah",
+          timeoutMs: 300000, // 5 minutes
+        });
+        
+        if (result.success && result.audioPath) {
+          return {
+            content: [
+              { type: "text", text: `✅ Podcast generated successfully!\n\n📁 Audio file: ${result.audioPath}\n⏱️ Duration: ${result.durationSec ? `${Math.round(result.durationSec / 60)} minutes` : 'unknown'}\n👥 Speakers: ${params.speaker1 || 'Alex'} & ${params.speaker2 || 'Sarah'}` },
+            ],
+          };
+        }
+        
+        return {
+          content: [
+            { type: "text", text: `❌ Podcast generation failed: ${result.error || 'Unknown error'}` },
+          ],
+        };
+        
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `❌ Error generating podcast: ${String(error)}` },
           ],
         };
       }
