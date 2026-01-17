@@ -417,6 +417,7 @@ export type ClawdisConfig = {
   deepResearch?: DeepResearchConfig;
   webSearch?: WebSearchConfig;
   tts?: TTSConfig;
+  ttsCli?: TTSCliConfig;
   gateway?: GatewayConfig;
   skills?: Record<string, SkillConfig>;
 };
@@ -756,6 +757,30 @@ const ttsSchema = z
 
 export type TTSConfig = z.infer<typeof ttsSchema>;
 
+// TTS CLI configuration defaults (for podcast generation)
+const TTS_CLI_DEFAULTS = {
+  enabled: false,
+  cliPath: "/home/almaz/TOOLS/gemini_tts_cli_sandbox/tts_cli.sh",
+  timeoutMs: 300000,
+  defaultSpeaker1: "Alex",
+  defaultSpeaker2: "Sarah",
+  outputDir: "./output",
+} as const;
+
+// TTS CLI configuration schema
+const ttsCliSchema = z
+  .object({
+    enabled: z.boolean().default(TTS_CLI_DEFAULTS.enabled),
+    cliPath: z.string().default(TTS_CLI_DEFAULTS.cliPath),
+    timeoutMs: z.number().int().positive().default(TTS_CLI_DEFAULTS.timeoutMs),
+    defaultSpeaker1: z.string().default(TTS_CLI_DEFAULTS.defaultSpeaker1),
+    defaultSpeaker2: z.string().default(TTS_CLI_DEFAULTS.defaultSpeaker2),
+    outputDir: z.string().default(TTS_CLI_DEFAULTS.outputDir),
+  })
+  .optional();
+
+export type TTSCliConfig = z.infer<typeof ttsCliSchema>;
+
 const ClawdisSchema = z.object({
   identity: z
     .object({
@@ -950,6 +975,7 @@ const ClawdisSchema = z.object({
   webSearch: webSearchSchema,
   aiClub: aiClubSchema,
   tts: ttsSchema,
+  ttsCli: ttsCliSchema,
   gateway: z
     .object({
       mode: z.union([z.literal("local"), z.literal("remote")]).optional(),
