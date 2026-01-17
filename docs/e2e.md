@@ -52,9 +52,14 @@ If you want to verify the Telegram transport without running the LLM:
 pnpm clawdis send --provider telegram --to <TELEGRAM_ID> --message "ping"
 ```
 
+## Automated E2E (telega_v2)
+
+If you want a bot-to-bot check that can be repeated and parsed, use telega_v2
+and validate the result against the relevant spec/template. See
+`docs/e2e-telega-v2/README.md`.
+
 ## Debug checklist
 
 - Gateway logs: `/tmp/clawdis/clawdis-YYYY-MM-DD.log`
 - Look for allowlist gating: `Blocked unauthorized telegram sender ... (not in allowFrom)`
 - Look for provider/model auth failures: `401 ... Authorization Failure`
-
