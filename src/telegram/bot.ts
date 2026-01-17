@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { Buffer } from "node:buffer";
 import { exec } from "node:child_process";
+import fs from "node:fs";
 import { writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -345,7 +346,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
           }
           return;
         }
-        await runPodcastGeneration(ctx, chatId, topic, speaker1, speaker2, logger, progressStatus);
+        await runPodcastGeneration(ctx, chatId, topic, speaker1, speaker2, logger, progressStatus, cfg);
         return;
       }
 
@@ -890,6 +891,79 @@ function parsePodcastCommand(
   return { topic, speaker1, speaker2 };
 }
 
+const PODCAST_PROGRESS_STEPS = [
+  "Command received",
+  "Script generation",
+  "Audio synthesis",
+  "MP3 conversion",
+  "Uploading to Telegram",
+];
+
+function buildPodcastStatusMessage({
+  topic,
+  speaker1,
+  speaker2,
+  stageIndex,
+  elapsedSec,
+  dryRun,
+  intervalSec,
+}: {
+  topic: string;
+  speaker1: string;
+  speaker2: string;
+  stageIndex: number;
+  elapsedSec: number;
+  dryRun: boolean;
+  intervalSec: number;
+}): string {
+  const steps = PODCAST_PROGRESS_STEPS.map((label, idx) => {
+    const icon = idx < stageIndex ? "●" : idx === stageIndex ? "◐" : "○";
+    return `  ${icon} ${label}`;
+  }).join("\n");
+
+  const dryRunNote = dryRun ? " (dry run)" : "";
+  return [
+    `Podcast generation${dryRunNote}`,
+    "",
+    `Topic: "${topic}"`,
+    `Speakers: ${speaker1} & ${speaker2}`,
+    `Elapsed: ${elapsedSec}s`,
+    "",
+    "Status:",
+    steps,
+    "",
+    `Updates every ${intervalSec}s.`,
+  ].join("\n");
+}
+
+function buildPodcastCompletionMessage({
+  topic,
+  speaker1,
+  speaker2,
+  durationSec,
+  dryRun,
+}: {
+  topic: string;
+  speaker1: string;
+  speaker2: string;
+  durationSec: number;
+  dryRun: boolean;
+}): string {
+  const dryRunNote = dryRun ? "\n\nDry run complete: audio not generated." : "";
+  return [
+    "Podcast generation completed",
+    "",
+    `Topic: "${topic}"`,
+    `Speakers: ${speaker1} & ${speaker2}`,
+    `Duration: ${Math.max(1, Math.round(durationSec / 60))} minutes`,
+    dryRunNote,
+  ].join("\n");
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function runAiClubAnalysis(
   ctx: Context,
   chatId: number,
@@ -1050,8 +1124,15 @@ async function runPodcastGeneration(
   speaker2: string,
   logger: ReturnType<typeof getChildLogger>,
   statusMessage?: StatusMessage | null,
+  config?: ReturnType<typeof loadConfig>,
 ): Promise<void> {
   const pipelineStartTime = Date.now();
+  const cfg = config ?? loadConfig();
+  const progressIntervalSec = Math.max(
+    5,
+    cfg.telegram?.podcastProgressIntervalSec ?? 30,
+  );
+  const dryRun = cfg.telegram?.podcastDryRun ?? false;
 
   const pipelineLog = (step: number | string, emoji: string, message: string) => {
     const timestamp = new Date().toISOString().slice(11, 23);
@@ -1083,58 +1164,105 @@ async function runPodcastGeneration(
   podcastInFlight.add(chatId);
   pipelineLog(2, "🔒", `Marked chat ${chatId} as in-flight`);
 
+  let statusChatId: number | undefined = statusMessage?.chatId;
+  let statusMessageId: number | undefined = statusMessage?.messageId;
+  let progressTimer: ReturnType<typeof setInterval> | null = null;
+
   try {
-    // Send initial status message with clear START marker
     pipelineLog(3, "💬", "Sending initial status message to Telegram");
-    
-    // 🎬 START PHASE - Clear notification to user
-    // Note: Using Markdown (not MarkdownV2) to avoid escaping issues
-    const startMsg = `🎙️ *PODCAST GENERATION STARTED* 🎬
 
-📋 *Topic:* "${topic}"
-👥 *Speakers:* ${speaker1} (Zephyr voice) & ${speaker2} (Puck voice)
+    if (!statusMessageId) {
+      const statusText = buildPodcastStatusMessage({
+        topic,
+        speaker1,
+        speaker2,
+        stageIndex: 0,
+        elapsedSec: 0,
+        dryRun,
+        intervalSec: progressIntervalSec,
+      });
+      const statusMsg = await ctx.reply(statusText);
+      statusChatId = ctx.chat?.id;
+      statusMessageId = statusMsg.message_id;
+    } else {
+      await editTelegramMessage(
+        ctx.api,
+        { chatId: statusChatId!, messageId: statusMessageId },
+        buildPodcastStatusMessage({
+          topic,
+          speaker1,
+          speaker2,
+          stageIndex: 0,
+          elapsedSec: 0,
+          dryRun,
+          intervalSec: progressIntervalSec,
+        }),
+      );
+    }
 
-⏱️ *Estimated Duration:* 2-5 minutes
-⚡ *Status:*
-  ✅ Command received
-  ⏳ Script generation (AI-powered)
-  ⏳ Audio synthesis (Gemini TTS)
-  ⏳ MP3 conversion
+    const statusTarget = { chatId: statusChatId!, messageId: statusMessageId! };
+    const progressStart = Date.now();
+    progressTimer = setInterval(async () => {
+      const elapsedSec = Math.floor((Date.now() - progressStart) / 1000);
+      const stageIndex = Math.min(
+        1 + Math.floor(elapsedSec / progressIntervalSec),
+        PODCAST_PROGRESS_STEPS.length - 1,
+      );
+      try {
+        await editTelegramMessage(
+          ctx.api,
+          statusTarget,
+          buildPodcastStatusMessage({
+            topic,
+            speaker1,
+            speaker2,
+            stageIndex,
+            elapsedSec,
+            dryRun,
+            intervalSec: progressIntervalSec,
+          }),
+        );
+      } catch (err) {
+        console.warn(`[podcast] Failed to update status: ${formatErrorMessage(err)}`);
+      }
+    }, progressIntervalSec * 1000);
 
-🔄 I'll send you the MP3 file as soon as it's ready!`;
-    
-    const statusMsg = await ctx.reply(startMsg, { parse_mode: "Markdown" });
-    pipelineLog(3, "✅", `Status message sent (msgId: ${statusMsg.message_id})`);
-
-    // Phase 1: Script Generation
-    pipelineLog(3.1, "📝", "Starting script generation...");
-    await ctx.api.editMessageText(chatId, statusMsg.message_id, `🎙️ *PODCAST GENERATION IN PROGRESS* 🎬
-
-📋 *Topic:* "${topic}"
-👥 *Speakers:* ${speaker1} & ${speaker2}
-⏱️ *Estimated:* 2-5 minutes remaining
-
-⚡ *Status:*
-  ✅ Command received
-  🔄 **Script generation** (AI-powered, ~30-60 sec)
-  ⏳ Audio synthesis (Gemini TTS)
-  ⏳ MP3 conversion
-
-🔄 Creating conversational dialogue...`, { parse_mode: "Markdown" });
+    if (dryRun) {
+      pipelineLog(4, "🧪", "Dry run enabled, simulating podcast generation");
+      const totalMs = progressIntervalSec * 1000 * (PODCAST_PROGRESS_STEPS.length - 1);
+      await sleepMs(totalMs);
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      const durationSec = Math.round((Date.now() - progressStart) / 1000);
+      await editTelegramMessage(
+        ctx.api,
+        statusTarget,
+        buildPodcastCompletionMessage({
+          topic,
+          speaker1,
+          speaker2,
+          durationSec,
+          dryRun,
+        }),
+      );
+      return;
+    }
 
     // Execute TTS CLI
     pipelineLog(4, "🤖", "Starting TTS CLI podcast generation...");
-    
+
     const { executeTTS } = await import("../tts/executor.js");
     const result = await executeTTS(topic, {
       speaker1,
       speaker2,
-      timeoutMs: 300000, // 5 minutes
+      timeoutMs: cfg.ttsCli?.timeoutMs ?? 300000,
     });
 
     if (!result.success) {
       pipelineLog(5, "❌", `Generation failed: ${result.error}`);
-      await ctx.reply(`❌ *Podcast Generation Failed*\n\nError: ${result.error}\n\nPlease try again with a different topic or check system logs.`, { parse_mode: "Markdown" });
+      await ctx.reply(`❌ Podcast Generation Failed\n\nError: ${result.error}\n\nPlease try again with a different topic or check system logs.`);
       return;
     }
 
@@ -1144,22 +1272,23 @@ async function runPodcastGeneration(
     // Phase 2: Audio Sending
     if (result.audioPath && fs.existsSync(result.audioPath)) {
       pipelineLog(6, "📤", "Sending audio file to Telegram...");
-      
-      // Update: Starting final delivery
-      await ctx.api.editMessageText(chatId, statusMsg.message_id, `🎙️ *PODCAST GENERATION COMPLETED* ✅
 
-📋 *Topic:* "${topic}"
-👥 *Speakers:* ${speaker1} & ${speaker2}
-✅ *Duration:* ${Math.round(result.durationSec / 60)} minutes
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      await editTelegramMessage(
+        ctx.api,
+        { chatId: statusChatId!, messageId: statusMessageId! },
+        buildPodcastCompletionMessage({
+          topic,
+          speaker1,
+          speaker2,
+          durationSec: result.durationSec ?? 0,
+          dryRun: false,
+        }),
+      );
 
-⚡ *Status:*
-  ✅ Command received
-  ✅ Script generation complete
-  ✅ Audio synthesis complete
-  ✅ MP3 conversion complete
-
-📤 *Sending audio file now...*`, { parse_mode: "Markdown" });
-      
       await ctx.replyWithAudio(
         new InputFile(result.audioPath),
         {
@@ -1175,15 +1304,18 @@ async function runPodcastGeneration(
       // await fs.promises.unlink(result.audioPath).catch(() => {});
     } else {
       pipelineLog(6, "❌", "Audio file not found");
-      await ctx.reply("❌ *Podcast Generation Error*\n\nAudio file was generated but could not be found on disk. This may be a file system or permissions issue.", { parse_mode: "Markdown" });
+      await ctx.reply("❌ Podcast Generation Error\n\nAudio file was generated but could not be found on disk. This may be a file system or permissions issue.");
     }
 
   } catch (error) {
     pipelineLog(5, "❌", `Unexpected error: ${error.message}`);
     
     const errorMessage = error instanceof Error ? error.message : String(error);
-    await ctx.reply(`❌ *Critical Error During Podcast Generation*\n\nError: ${errorMessage}\n\nThis is unexpected. Please check system logs or try again.`, { parse_mode: "Markdown" });
+    await ctx.reply(`❌ Critical Error During Podcast Generation\n\nError: ${errorMessage}\n\nThis is unexpected. Please check system logs or try again.`);
   } finally {
+    if (progressTimer) {
+      clearInterval(progressTimer);
+    }
     // Always remove from in-flight set
     podcastInFlight.delete(chatId);
     pipelineLog(7, "🔓", `Removed chat ${chatId} from in-flight`);
