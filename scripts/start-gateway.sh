@@ -27,8 +27,9 @@ if [ ! -d "$NODE_PATH" ]; then
     exit 1
 fi
 
-# Set PATH to include correct Node.js version
-export PATH="${NODE_PATH}:$PATH"
+# Set PATH to include correct Node.js version and user tools
+EXTRA_PATHS="/home/almaz/bin:/home/almaz/.local/bin"
+export PATH="${NODE_PATH}:${EXTRA_PATHS}:$PATH"
 
 # Verify Node.js version
 ACTUAL_VERSION=$(node --version 2>/dev/null || echo "unknown")
