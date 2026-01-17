@@ -30,7 +30,7 @@ const STEP_ORDER = [
   { key: "writing", label: "Запись файлов" },
   { key: "translation", label: "Перевод" },
   { key: "publishing", label: "Публикация" },
-  { key: "notify", label: "Уведомление" },
+  { key: "done", label: "Готово" },
 ];
 
 export function resolveMultyModels(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -114,6 +114,8 @@ export function buildMultyStatusMessage(params: {
     notifyEnabled = true,
     nowMs,
   } = params;
+  const escapedTopic = escapeHtml(topic);
+  const escapedModels = escapeHtml(formatMultyModelsDisplay(models));
   const times = steps.timestamps ?? {};
   const done = new Set<string>();
   if (times.start) done.add("command");
@@ -126,7 +128,7 @@ export function buildMultyStatusMessage(params: {
   if (writingDone) done.add("writing");
   if (times.translation_done) done.add("translation");
   if (publishEnabled ? times.publish_done : true) done.add("publishing");
-  if (notifyEnabled ? times.notify_done : true) done.add("notify");
+  if (times.notify_done || times.publish_done) done.add("done");
 
   const currentIndex = STEP_ORDER.findIndex((step) => !done.has(step.key));
   const lineDurations = resolveStepDurations({
@@ -146,11 +148,10 @@ export function buildMultyStatusMessage(params: {
     const label =
       step.key === "publishing" && !publishEnabled
         ? "Публикация (пропуск)"
-        : step.key === "notify" && !notifyEnabled
-          ? "Уведомление (пропуск)"
-          : step.label;
+        : step.label;
+    const escapedLabel = escapeHtml(label);
     const duration = lineDurations[step.key];
-    const decoratedLabel = done.has(step.key) ? `~~${label}~~` : label;
+    const decoratedLabel = escapedLabel;
     const suffix = duration ? ` (${duration})` : "";
     return `${marker} ${decoratedLabel}${suffix}`;
   });
@@ -158,8 +159,8 @@ export function buildMultyStatusMessage(params: {
   const progressBar = renderProgressBar(percent, 10);
 
   return [
-    `Тема: "${topic}"`,
-    `Модели: ${formatMultyModelsDisplay(models)}`,
+    `Тема: "${escapedTopic}"`,
+    `Модели: ${escapedModels}`,
     `Прошло: ${elapsedSeconds}с`,
     `Прогресс: ${percent}% ${progressBar}`,
     "",
@@ -167,6 +168,29 @@ export function buildMultyStatusMessage(params: {
     ...lines,
     "",
     "Обновление каждые 30с.",
+  ].join("\n");
+}
+
+export function buildMultyCanceledMessage(params: {
+  topic: string;
+  models: string[];
+  elapsedSeconds: number;
+  reason?: string;
+}): string {
+  const { topic, models, elapsedSeconds, reason } = params;
+  const escapedTopic = escapeHtml(topic);
+  const escapedModels = escapeHtml(formatMultyModelsDisplay(models));
+  const escapedReason = reason ? escapeHtml(reason) : "Мультисэмплинг отменен.";
+
+  return [
+    `Тема: "${escapedTopic}"`,
+    `Модели: ${escapedModels}`,
+    `Прошло: ${elapsedSeconds}с`,
+    "",
+    "Статус:",
+    `⛔ ${escapedReason}`,
+    "",
+    "Обновления остановлены.",
   ].join("\n");
 }
 
@@ -187,8 +211,8 @@ export function resolveMultyCurrentStepLabel(
   if (!writingDone) return "Запись файлов";
   if (!times.translation_done) return "Перевод";
   if (publishEnabled && !times.publish_done) return "Публикация";
-  if (notifyEnabled && !times.notify_done) return "Уведомление";
-  return "Завершено";
+  if (notifyEnabled && !times.notify_done) return "Готово";
+  return "Готово";
 }
 
 function resolveStepDurations(params: {
@@ -225,7 +249,7 @@ function resolveStepDurations(params: {
     durations.publishing = formatDuration(publishAt - translationAt);
   }
   if (notifyEnabled && publishAt && notifyAt) {
-    durations.notify = formatDuration(notifyAt - publishAt);
+    durations.done = formatDuration(notifyAt - publishAt);
   }
 
   if (!durations.multisampling && startAt) {
@@ -246,12 +270,11 @@ function resolveProgressPercent(
   notifyEnabled: boolean,
 ): number {
   const baseSteps = 5;
-  const total =
-    baseSteps + (publishEnabled ? 1 : 0) + (notifyEnabled ? 1 : 0);
+  const total = baseSteps + (publishEnabled ? 1 : 0) + 1;
   const doneCount =
     Math.min(done.size, baseSteps) +
     (publishEnabled ? (done.has("publishing") ? 1 : 0) : 1) +
-    (notifyEnabled ? (done.has("notify") ? 1 : 0) : 1);
+    (done.has("done") ? 1 : 0);
   return Math.min(100, Math.round((doneCount / total) * 100));
 }
 
@@ -260,4 +283,11 @@ function renderProgressBar(percent: number, width: number): string {
   const filled = Math.round((clamped / 100) * width);
   const empty = Math.max(0, width - filled);
   return `[${"#".repeat(filled)}${"-".repeat(empty)}]`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
