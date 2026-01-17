@@ -1,12 +1,17 @@
+type StepTimestampMap = {
+  start?: number;
+  multisample_done?: number;
+  synthesis_done?: number;
+  article_written?: number;
+  raw_written?: number;
+  translation_done?: number;
+  publish_done?: number;
+  notify_done?: number;
+  auth_error?: number;
+};
+
 type MultyStepSnapshot = {
-  start?: boolean;
-  multisampleDone?: boolean;
-  synthesisDone?: boolean;
-  articleWritten?: boolean;
-  rawWritten?: boolean;
-  translationDone?: boolean;
-  publishDone?: boolean;
-  notifyDone?: boolean;
+  timestamps: StepTimestampMap;
   authError?: boolean;
 };
 
@@ -41,39 +46,45 @@ export function formatMultyModelsDisplay(models: string[]): string {
 }
 
 export function parseMultyJsonl(content: string): MultyStepSnapshot {
-  const snapshot: MultyStepSnapshot = {};
+  const snapshot: MultyStepSnapshot = { timestamps: {} };
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const payload = JSON.parse(trimmed) as { step?: string };
+      const payload = JSON.parse(trimmed) as {
+        step?: string;
+        timestamp?: number;
+      };
+      const timestamp =
+        typeof payload.timestamp === "number" ? payload.timestamp : undefined;
       switch (payload.step) {
         case "start":
-          snapshot.start = true;
+          if (timestamp) snapshot.timestamps.start = timestamp;
           break;
         case "multisample_done":
-          snapshot.multisampleDone = true;
+          if (timestamp) snapshot.timestamps.multisample_done = timestamp;
           break;
         case "synthesis_done":
-          snapshot.synthesisDone = true;
+          if (timestamp) snapshot.timestamps.synthesis_done = timestamp;
           break;
         case "article_written":
-          snapshot.articleWritten = true;
+          if (timestamp) snapshot.timestamps.article_written = timestamp;
           break;
         case "raw_written":
-          snapshot.rawWritten = true;
+          if (timestamp) snapshot.timestamps.raw_written = timestamp;
           break;
         case "translation_done":
-          snapshot.translationDone = true;
+          if (timestamp) snapshot.timestamps.translation_done = timestamp;
           break;
         case "publish_done":
-          snapshot.publishDone = true;
+          if (timestamp) snapshot.timestamps.publish_done = timestamp;
           break;
         case "notify_done":
-          snapshot.notifyDone = true;
+          if (timestamp) snapshot.timestamps.notify_done = timestamp;
           break;
         case "auth_error":
           snapshot.authError = true;
+          if (timestamp) snapshot.timestamps.auth_error = timestamp;
           break;
         default:
           break;
@@ -92,6 +103,7 @@ export function buildMultyStatusMessage(params: {
   steps: MultyStepSnapshot;
   publishEnabled?: boolean;
   notifyEnabled?: boolean;
+  nowMs?: number;
 }): string {
   const {
     topic,
@@ -100,17 +112,30 @@ export function buildMultyStatusMessage(params: {
     steps,
     publishEnabled = true,
     notifyEnabled = true,
+    nowMs,
   } = params;
+  const times = steps.timestamps ?? {};
   const done = new Set<string>();
-  if (steps.start) done.add("command");
-  if (steps.multisampleDone) done.add("multisampling");
-  if (steps.synthesisDone) done.add("synthesis");
-  if (steps.articleWritten && steps.rawWritten) done.add("writing");
-  if (steps.translationDone) done.add("translation");
-  if (publishEnabled ? steps.publishDone : true) done.add("publishing");
-  if (notifyEnabled ? steps.notifyDone : true) done.add("notify");
+  if (times.start) done.add("command");
+  if (times.multisample_done) done.add("multisampling");
+  if (times.synthesis_done) done.add("synthesis");
+  const writingDone =
+    times.article_written && times.raw_written
+      ? Math.max(times.article_written, times.raw_written)
+      : undefined;
+  if (writingDone) done.add("writing");
+  if (times.translation_done) done.add("translation");
+  if (publishEnabled ? times.publish_done : true) done.add("publishing");
+  if (notifyEnabled ? times.notify_done : true) done.add("notify");
 
   const currentIndex = STEP_ORDER.findIndex((step) => !done.has(step.key));
+  const lineDurations = resolveStepDurations({
+    times,
+    writingDone,
+    publishEnabled,
+    notifyEnabled,
+    nowMs: nowMs ?? Date.now(),
+  });
   const lines = STEP_ORDER.map((step, index) => {
     let marker = "○";
     if (done.has(step.key)) {
@@ -120,22 +145,28 @@ export function buildMultyStatusMessage(params: {
     }
     const label =
       step.key === "publishing" && !publishEnabled
-        ? "Publishing (skipped)"
+        ? "Публикация (пропуск)"
         : step.key === "notify" && !notifyEnabled
-          ? "Notify (skipped)"
+          ? "Уведомление (пропуск)"
           : step.label;
-    return `${marker} ${label}`;
+    const duration = lineDurations[step.key];
+    const decoratedLabel = done.has(step.key) ? `~~${label}~~` : label;
+    const suffix = duration ? ` (${duration})` : "";
+    return `${marker} ${decoratedLabel}${suffix}`;
   });
+  const percent = resolveProgressPercent(done, publishEnabled, notifyEnabled);
+  const progressBar = renderProgressBar(percent, 10);
 
   return [
     `Тема: "${topic}"`,
     `Модели: ${formatMultyModelsDisplay(models)}`,
-    `Прошло: ${elapsedSeconds}s`,
+    `Прошло: ${elapsedSeconds}с`,
+    `Прогресс: ${percent}% ${progressBar}`,
     "",
     "Статус:",
     ...lines,
     "",
-    "Обновление каждые 30s.",
+    "Обновление каждые 30с.",
   ].join("\n");
 }
 
@@ -145,12 +176,88 @@ export function resolveMultyCurrentStepLabel(
 ): string {
   const publishEnabled = options?.publishEnabled ?? true;
   const notifyEnabled = options?.notifyEnabled ?? true;
-  if (!steps.start) return "Command received";
-  if (!steps.multisampleDone) return "Multisampling";
-  if (!steps.synthesisDone) return "Synthesis";
-  if (!steps.articleWritten || !steps.rawWritten) return "Writing files";
-  if (!steps.translationDone) return "Translation";
-  if (publishEnabled && !steps.publishDone) return "Publishing";
-  if (notifyEnabled && !steps.notifyDone) return "Notify";
-  return "Completed";
+  const times = steps.timestamps ?? {};
+  const writingDone =
+    times.article_written && times.raw_written
+      ? Math.max(times.article_written, times.raw_written)
+      : undefined;
+  if (!times.start) return "Команда получена";
+  if (!times.multisample_done) return "Мультисэмплинг";
+  if (!times.synthesis_done) return "Синтез";
+  if (!writingDone) return "Запись файлов";
+  if (!times.translation_done) return "Перевод";
+  if (publishEnabled && !times.publish_done) return "Публикация";
+  if (notifyEnabled && !times.notify_done) return "Уведомление";
+  return "Завершено";
+}
+
+function resolveStepDurations(params: {
+  times: StepTimestampMap;
+  writingDone?: number;
+  publishEnabled: boolean;
+  notifyEnabled: boolean;
+  nowMs: number;
+}): Record<string, string | undefined> {
+  const { times, writingDone, publishEnabled, notifyEnabled, nowMs } = params;
+  const toMs = (value?: number) => (value ? Math.floor(value * 1000) : undefined);
+  const startAt = toMs(times.start);
+  const multisampleAt = toMs(times.multisample_done);
+  const synthesisAt = toMs(times.synthesis_done);
+  const writingAt = writingDone ? Math.floor(writingDone * 1000) : undefined;
+  const translationAt = toMs(times.translation_done);
+  const publishAt = toMs(times.publish_done);
+  const notifyAt = toMs(times.notify_done);
+
+  const durations: Record<string, string | undefined> = {};
+  if (startAt && multisampleAt) {
+    durations.multisampling = formatDuration(multisampleAt - startAt);
+  }
+  if (multisampleAt && synthesisAt) {
+    durations.synthesis = formatDuration(synthesisAt - multisampleAt);
+  }
+  if (synthesisAt && writingAt) {
+    durations.writing = formatDuration(writingAt - synthesisAt);
+  }
+  if (writingAt && translationAt) {
+    durations.translation = formatDuration(translationAt - writingAt);
+  }
+  if (publishEnabled && translationAt && publishAt) {
+    durations.publishing = formatDuration(publishAt - translationAt);
+  }
+  if (notifyEnabled && publishAt && notifyAt) {
+    durations.notify = formatDuration(notifyAt - publishAt);
+  }
+
+  if (!durations.multisampling && startAt) {
+    durations.command = formatDuration(nowMs - startAt);
+  }
+
+  return durations;
+}
+
+function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  return `${seconds}с`;
+}
+
+function resolveProgressPercent(
+  done: Set<string>,
+  publishEnabled: boolean,
+  notifyEnabled: boolean,
+): number {
+  const baseSteps = 5;
+  const total =
+    baseSteps + (publishEnabled ? 1 : 0) + (notifyEnabled ? 1 : 0);
+  const doneCount =
+    Math.min(done.size, baseSteps) +
+    (publishEnabled ? (done.has("publishing") ? 1 : 0) : 1) +
+    (notifyEnabled ? (done.has("notify") ? 1 : 0) : 1);
+  return Math.min(100, Math.round((doneCount / total) * 100));
+}
+
+function renderProgressBar(percent: number, width: number): string {
+  const clamped = Math.min(100, Math.max(0, percent));
+  const filled = Math.round((clamped / 100) * width);
+  const empty = Math.max(0, width - filled);
+  return `[${"#".repeat(filled)}${"-".repeat(empty)}]`;
 }
