@@ -22,6 +22,15 @@ docs/
 └── guides/           # User and developer guides
 ```
 
+### Templates in /templates
+
+Canonical output templates live outside `docs/` in the `templates/` directory:
+
+```
+templates/
+└── telegram/         # Telegram message formatting templates
+```
+
 ## Understanding Each Directory
 
 ### 📂 `docs/investigations/`
