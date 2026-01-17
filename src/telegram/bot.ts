@@ -68,6 +68,7 @@ const PARSE_ERR_RE =
 const MESSAGE_NOT_MODIFIED_RE = /message is not modified/i;
 const deepResearchInFlight = new Set<number>();
 const webSearchInFlight = new Set<number>();
+const podcastInFlight = new Set<number>();
 
 // TTS in-flight tracking with TTL (5 minutes)
 const ttsInFlight = new Map<string, number>();
@@ -154,10 +155,12 @@ export function createTelegramBot(opts: TelegramBotOptions) {
         msg.chat.type === "group" || msg.chat.type === "supergroup";
 
       // Instant acknowledgment at the very beginning
-      // Skip for /web commands - they have their own status message
+      // Skip for commands that have their own status messages
       const rawText = (msg.text ?? msg.caption ?? "").trim();
       const isWebCommand = /^\/web(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
       const isAiClubCommand = /^\/ai_(day|daily|week)(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
+      const isAiReportCommand = /^\/ai_report(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
+      const isPodcastCommand = /^\/podcast(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
       const isPingCommand = /^\/ping(?:@[a-z0-9_]+)?(?:\s|$)/i.test(rawText);
 
       // Handle /ping command - TEST CHANGE
@@ -166,7 +169,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
         return;
       }
 
-      if (!isWebCommand && !isAiClubCommand) {
+      if (!isWebCommand && !isAiClubCommand && !isAiReportCommand && !isPodcastCommand) {
         try {
           let initialAck = "🤔 Думаю...";
           if (msg.photo) initialAck = "📸 Вижу фото, сейчас посмотрю...";
@@ -321,6 +324,28 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       const aiReportCommand = parseAiReportCommand(messageText, botUsername);
       if (aiReportCommand) {
         await runAiReportAnalysis(ctx, chatId, aiReportCommand.period, logger, progressStatus);
+        return;
+      }
+
+      // Check for /podcast command
+      const podcastCommand = parsePodcastCommand(messageText, botUsername);
+      if (podcastCommand) {
+        const { topic, speaker1 = "Alex", speaker2 = "Sarah" } = podcastCommand;
+        if (!topic) {
+          if (progressStatus) {
+            await editTelegramMessage(
+              ctx.api,
+              progressStatus,
+              "❌ Please provide a topic after /podcast. Example: `/podcast Artificial Intelligence in Healthcare`"
+            );
+          } else {
+            await ctx.reply(
+              "❌ Please provide a topic after /podcast. Example: `/podcast Artificial Intelligence in Healthcare`"
+            );
+          }
+          return;
+        }
+        await runPodcastGeneration(ctx, chatId, topic, speaker1, speaker2, logger, progressStatus);
         return;
       }
 
@@ -823,6 +848,48 @@ function parseAiReportCommand(
   return { period: "today" };
 }
 
+function parsePodcastCommand(
+  messageText: string,
+  botUsername?: string,
+): { topic: string; speaker1?: string; speaker2?: string } | null {
+  // Match: /podcast@bot topic | /podcast topic
+  // Also support: /podcast@bot "topic" --speaker1 Alex --speaker2 Sarah
+  const match = /^\/podcast(?:@([a-z0-9_]+))?(?:\s+(.+))?$/i.exec(messageText.trim());
+  if (!match) return null;
+  
+  const mentioned = match[1];
+  if (mentioned && botUsername && mentioned.toLowerCase() !== botUsername) {
+    return null;
+  }
+  
+  const argsStr = (match[2] ?? "").trim();
+  if (!argsStr) return { topic: "" }; // Empty topic will be handled by validator
+  
+  // Parse topic and optional speaker arguments
+  // Support both quoted and unquoted topics
+  let topic = argsStr;
+  let speaker1 = "Alex";
+  let speaker2 = "Sarah";
+  
+  // Check for --speaker1 and --speaker2 flags
+  const speaker1Match = argsStr.match(/--speaker1\s+"([^"]+)"|--speaker1\s+(\S+)/);
+  if (speaker1Match) {
+    speaker1 = speaker1Match[1] || speaker1Match[2];
+    topic = topic.replace(speaker1Match[0], "").trim();
+  }
+  
+  const speaker2Match = argsStr.match(/--speaker2\s+"([^"]+)"|--speaker2\s+(\S+)/);
+  if (speaker2Match) {
+    speaker2 = speaker2Match[1] || speaker2Match[2];
+    topic = topic.replace(speaker2Match[0], "").trim();
+  }
+  
+  // Remove quotes from topic if present
+  topic = topic.replace(/^"(.+)"$|^'(.+)'$/, "$1$2");
+  
+  return { topic, speaker1, speaker2 };
+}
+
 async function runAiClubAnalysis(
   ctx: Context,
   chatId: number,
@@ -972,6 +1039,154 @@ async function runAiReportAnalysis(
     if (statusChatId && statusMessageId) {
       await editTelegramMessage(ctx.api, { chatId: statusChatId, messageId: statusMessageId }, `❌ Ошибка: ${errorText}`);
     }
+  }
+}
+
+async function runPodcastGeneration(
+  ctx: Context,
+  chatId: number,
+  topic: string,
+  speaker1: string,
+  speaker2: string,
+  logger: ReturnType<typeof getChildLogger>,
+  statusMessage?: StatusMessage | null,
+): Promise<void> {
+  const pipelineStartTime = Date.now();
+
+  const pipelineLog = (step: number | string, emoji: string, message: string) => {
+    const timestamp = new Date().toISOString().slice(11, 23);
+    const elapsed = Date.now() - pipelineStartTime;
+    const elapsedStr = elapsed < 1000
+      ? `+${elapsed}ms`
+      : `+${(elapsed / 1000).toFixed(1)}s`;
+    const paddedElapsed = elapsedStr.padStart(8);
+    console.log(`[podcast] ${timestamp} │ ${paddedElapsed} │ ${emoji} STEP ${step} │ ${message}`);
+  };
+
+  // Validate topic
+  if (!topic || topic.length < 5) {
+    await ctx.reply("❌ Please provide a topic for the podcast. Example: `/podcast Artificial Intelligence in Healthcare`");
+    return;
+  }
+
+  pipelineLog(1, "🎙️", `Received /podcast command: "${topic.slice(0, 50)}${topic.length > 50 ? '...' : ''}"`);
+  pipelineLog(1, "👥", `Speakers: ${speaker1} & ${speaker2}`);
+
+  // Check if already generating for this chat
+  if (podcastInFlight.has(chatId)) {
+    pipelineLog(1, "⏸️", `Generation already in-flight for chat ${chatId}, skipping`);
+    await ctx.reply("🎙️ *Podcast generation already in progress* for this chat. Please wait.\n\n💡 You can only generate one podcast at a time per chat.");
+    return;
+  }
+
+  // Mark as in-flight
+  podcastInFlight.add(chatId);
+  pipelineLog(2, "🔒", `Marked chat ${chatId} as in-flight`);
+
+  try {
+    // Send initial status message with clear START marker
+    pipelineLog(3, "💬", "Sending initial status message to Telegram");
+    
+    // 🎬 START PHASE - Clear notification to user
+    // Note: Using Markdown (not MarkdownV2) to avoid escaping issues
+    const startMsg = `🎙️ *PODCAST GENERATION STARTED* 🎬
+
+📋 *Topic:* "${topic}"
+👥 *Speakers:* ${speaker1} (Zephyr voice) & ${speaker2} (Puck voice)
+
+⏱️ *Estimated Duration:* 2-5 minutes
+⚡ *Status:*
+  ✅ Command received
+  ⏳ Script generation (AI-powered)
+  ⏳ Audio synthesis (Gemini TTS)
+  ⏳ MP3 conversion
+
+🔄 I'll send you the MP3 file as soon as it's ready!`;
+    
+    const statusMsg = await ctx.reply(startMsg, { parse_mode: "Markdown" });
+    pipelineLog(3, "✅", `Status message sent (msgId: ${statusMsg.message_id})`);
+
+    // Phase 1: Script Generation
+    pipelineLog(3.1, "📝", "Starting script generation...");
+    await ctx.api.editMessageText(chatId, statusMsg.message_id, `🎙️ *PODCAST GENERATION IN PROGRESS* 🎬
+
+📋 *Topic:* "${topic}"
+👥 *Speakers:* ${speaker1} & ${speaker2}
+⏱️ *Estimated:* 2-5 minutes remaining
+
+⚡ *Status:*
+  ✅ Command received
+  🔄 **Script generation** (AI-powered, ~30-60 sec)
+  ⏳ Audio synthesis (Gemini TTS)
+  ⏳ MP3 conversion
+
+🔄 Creating conversational dialogue...`, { parse_mode: "Markdown" });
+
+    // Execute TTS CLI
+    pipelineLog(4, "🤖", "Starting TTS CLI podcast generation...");
+    
+    const { executeTTS } = await import("../tts/executor.js");
+    const result = await executeTTS(topic, {
+      speaker1,
+      speaker2,
+      timeoutMs: 300000, // 5 minutes
+    });
+
+    if (!result.success) {
+      pipelineLog(5, "❌", `Generation failed: ${result.error}`);
+      await ctx.reply(`❌ *Podcast Generation Failed*\n\nError: ${result.error}\n\nPlease try again with a different topic or check system logs.`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    pipelineLog(5, "✅", `Generation completed in ${result.durationSec}s`);
+    pipelineLog(5, "📁", `Audio file: ${result.audioPath}`);
+
+    // Phase 2: Audio Sending
+    if (result.audioPath && fs.existsSync(result.audioPath)) {
+      pipelineLog(6, "📤", "Sending audio file to Telegram...");
+      
+      // Update: Starting final delivery
+      await ctx.api.editMessageText(chatId, statusMsg.message_id, `🎙️ *PODCAST GENERATION COMPLETED* ✅
+
+📋 *Topic:* "${topic}"
+👥 *Speakers:* ${speaker1} & ${speaker2}
+✅ *Duration:* ${Math.round(result.durationSec / 60)} minutes
+
+⚡ *Status:*
+  ✅ Command received
+  ✅ Script generation complete
+  ✅ Audio synthesis complete
+  ✅ MP3 conversion complete
+
+📤 *Sending audio file now...*`, { parse_mode: "Markdown" });
+      
+      await ctx.replyWithAudio(
+        new InputFile(result.audioPath),
+        {
+          caption: `🎙️ Podcast: "${topic}"\n\n👥 ${speaker1} & ${speaker2}\n⏱️ ${Math.round(result.durationSec / 60)} minutes`,
+          title: topic.length > 64 ? topic.slice(0, 61) + "..." : topic,
+          performer: `${speaker1} & ${speaker2}`,
+        }
+      );
+      
+      pipelineLog(6, "✅", "Audio file sent successfully");
+      
+      // Cleanup (optional)
+      // await fs.promises.unlink(result.audioPath).catch(() => {});
+    } else {
+      pipelineLog(6, "❌", "Audio file not found");
+      await ctx.reply("❌ *Podcast Generation Error*\n\nAudio file was generated but could not be found on disk. This may be a file system or permissions issue.", { parse_mode: "Markdown" });
+    }
+
+  } catch (error) {
+    pipelineLog(5, "❌", `Unexpected error: ${error.message}`);
+    
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    await ctx.reply(`❌ *Critical Error During Podcast Generation*\n\nError: ${errorMessage}\n\nThis is unexpected. Please check system logs or try again.`, { parse_mode: "Markdown" });
+  } finally {
+    // Always remove from in-flight set
+    podcastInFlight.delete(chatId);
+    pipelineLog(7, "🔓", `Removed chat ${chatId} from in-flight`);
   }
 }
 
