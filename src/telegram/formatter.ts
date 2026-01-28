@@ -48,6 +48,35 @@ const EMOJI_REGEX = /[\u{1F1E0}-\u{1F1FF}\u{1F300}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\
  * 1. Strip variation selector (makes emojis colorful)
  * 2. Then apply emoji regex filter
  */
+function normalizeBoldSpacing(text: string): string {
+  return text
+    .replace(/\*\*([\s\S]*?)\*\*/g, (match, inner) => {
+      const trimmed = inner.trim();
+      if (!trimmed || trimmed === inner) return match;
+      return `**${trimmed}**`;
+    })
+    .replace(/__([\s\S]*?)__/g, (match, inner) => {
+      const trimmed = inner.trim();
+      if (!trimmed || trimmed === inner) return match;
+      return `__${trimmed}__`;
+    });
+}
+
+function normalizeMarkdownSpacing(text: string): string {
+  const codePattern = /```[\s\S]*?```|`[^`\n]*`/g;
+  let normalized = "";
+  let lastIndex = 0;
+  for (const match of text.matchAll(codePattern)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    normalized += normalizeBoldSpacing(text.slice(lastIndex, start));
+    normalized += match[0];
+    lastIndex = end;
+  }
+  normalized += normalizeBoldSpacing(text.slice(lastIndex));
+  return normalized;
+}
+
 function stripColorfulEmoji(text: string): string {
   // First strip variation selector \uFE0F (makes text style → emoji style)
   const noVariation = text.replace(/\uFE0F/g, "");
@@ -57,14 +86,29 @@ function stripColorfulEmoji(text: string): string {
   );
 }
 
+function fixBlockquoteFormatting(formatted: string): string {
+  return formatted
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("\\>")) return line;
+      const rest = line.slice(2);
+      const trimmed = rest.startsWith(" ") ? rest.slice(1) : rest;
+      const fixedPrefix = `> ${trimmed}`;
+      return fixedPrefix.replaceAll("\\_", "_").replaceAll("\\*", "*");
+    })
+    .join("\n");
+}
+
 /**
  * Format message for Telegram with MarkdownV2
  * 1. Strips colorful emojis
  * 2. Converts to Telegram MarkdownV2 format
  */
 export function formatTelegramMessage(text: string): string {
-  const noColorEmoji = stripColorfulEmoji(text);
-  return telegramifyMarkdown(noColorEmoji, "escape");
+  const normalized = normalizeMarkdownSpacing(text);
+  const noColorEmoji = stripColorfulEmoji(normalized);
+  const formatted = telegramifyMarkdown(noColorEmoji, "escape");
+  return fixBlockquoteFormatting(formatted);
 }
 
 /**

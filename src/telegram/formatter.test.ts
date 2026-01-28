@@ -90,6 +90,25 @@ describe("formatTelegramMessage", () => {
     const result = formatTelegramMessage(input);
     expect(result).toBe("① First step ➡ ② Second step\n");
   });
+
+  it("should preserve blockquote emphasis", () => {
+    const input = "> *quote* and **bold**";
+    const result = formatTelegramMessage(input);
+    expect(result).toBe("> _quote_ and *bold*\n");
+  });
+
+  it("should normalize bold markers with inner spacing", () => {
+    const input = "2.  ** SVG анимированная инфографика**";
+    const result = formatTelegramMessage(input);
+    expect(result).toContain("*SVG анимированная инфографика*");
+    expect(result).not.toContain("** SVG");
+  });
+
+  it("should normalize double-underscore bold spacing", () => {
+    const input = "__  spaced bold  __";
+    const result = formatTelegramMessage(input);
+    expect(result).toBe("*spaced bold*\n");
+  });
 });
 
 describe("emoji filtering integration", () => {

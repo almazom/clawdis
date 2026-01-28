@@ -48,6 +48,7 @@ import { startLivenessProbe, type LivenessProbeOptions } from "./liveness-probe.
 import { messages as webSearchMessages } from "../web-search/messages.js";
 import { executeWebSearch } from "../web-search/executor.js";
 import { executeMultiAgentWebSearch, formatTelegramWithAgent } from "../web-search/multi-agent.js";
+import { fetchViaWebReader } from "../web-fetch/webReader-adapter.js";
 import { getAiClubReport } from "../commands/ai-club.js";
 import { getAiReport } from "../commands/ai-report/index.js";
 import {
@@ -61,8 +62,10 @@ import { isTTSEnabled, synthesize } from "../tts/provider.js";
 import {
   parseVoiceCommand,
   getLastAssistantMessageFromTranscript,
+  extractFirstUrl,
+  stripMarkdownForSpeech,
 } from "../tts/voice-command.js";
-import { formatTelegramMessage } from "./formatter.js";
+import { formatPlainText, formatTelegramMessage } from "./formatter.js";
 import { parseMultyCommand } from "../multy/command.js";
 import {
   buildMultyStatusMessage,
@@ -87,26 +90,15 @@ const multyRuns = new Map<string, MultyRun>();
 const MULTY_LOCK_DIR = "/tmp/clawdis";
 const MULTY_STATUS_INTERVAL_MS = 30_000;
 const MULTY_CANCEL_KILL_TIMEOUT_MS = 10_000;
+const MULTY_LOCK_HEARTBEAT_MS = 10_000;
+const MULTY_LOCK_STALE_MS = 60_000;
 
 // TTS in-flight tracking with TTL (5 minutes)
 const ttsInFlight = new Map<string, number>();
 const TTS_IN_FLIGHT_TTL_MS = 5 * 60 * 1000;
 const TTS_CLEANUP_INTERVAL_MS = 60 * 1000; // Clean every minute
-
-// Periodic cleanup of expired TTS entries
-setInterval(() => {
-  const now = Date.now();
-  let cleaned = 0;
-  for (const [key, timestamp] of ttsInFlight.entries()) {
-    if (now - timestamp > TTS_IN_FLIGHT_TTL_MS) {
-      ttsInFlight.delete(key);
-      cleaned++;
-    }
-  }
-  if (cleaned > 0) {
-    logVerbose(`[tts] Cleaned up ${cleaned} expired in-flight entries`);
-  }
-}, TTS_CLEANUP_INTERVAL_MS);
+let ttsCleanupInterval: NodeJS.Timer | null = null;
+let ttsCleanupRefCount = 0;
 const CATEGORY_CONFIDENCE_THRESHOLD = 0.7;
 const CATEGORY_MIN_WORDS = 2;
 const CATEGORY_MIN_CHARS = 6;
@@ -131,6 +123,14 @@ type MultyRun = {
   stopUpdates: () => void;
 };
 
+type MultyLockPayload = {
+  pid?: number;
+  runId?: string;
+  topic?: string;
+  startedAt?: number;
+  updatedAt?: number;
+};
+
 type TelegramMessage = Message.CommonMessage;
 
 type TelegramContext = {
@@ -153,6 +153,39 @@ export type TelegramBotOptions = {
   livenessProbe?: Omit<LivenessProbeOptions, "bot"> | boolean;
 };
 
+function startTtsCleanupTimer(): () => void {
+  ttsCleanupRefCount += 1;
+  if (!ttsCleanupInterval) {
+    ttsCleanupInterval = setInterval(() => {
+      const now = Date.now();
+      let cleaned = 0;
+      for (const [key, timestamp] of ttsInFlight.entries()) {
+        if (now - timestamp > TTS_IN_FLIGHT_TTL_MS) {
+          ttsInFlight.delete(key);
+          cleaned++;
+        }
+      }
+      if (cleaned > 0) {
+        logVerbose(`[tts] Cleaned up ${cleaned} expired in-flight entries`);
+      }
+    }, TTS_CLEANUP_INTERVAL_MS);
+    if (typeof ttsCleanupInterval.unref === "function") {
+      ttsCleanupInterval.unref();
+    }
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    ttsCleanupRefCount = Math.max(0, ttsCleanupRefCount - 1);
+    if (ttsCleanupRefCount === 0 && ttsCleanupInterval) {
+      clearInterval(ttsCleanupInterval);
+      ttsCleanupInterval = null;
+    }
+  };
+}
+
 export function createTelegramBot(opts: TelegramBotOptions) {
   const runtime: RuntimeEnv = opts.runtime ?? {
     log: console.log,
@@ -167,6 +200,16 @@ export function createTelegramBot(opts: TelegramBotOptions) {
 
   const bot = new Bot(opts.token, { client });
   bot.api.config.use(apiThrottler());
+  const releaseTtsCleanup = startTtsCleanupTimer();
+  const originalStop = bot.stop.bind(bot);
+  let ttsCleanupReleased = false;
+  bot.stop = async (...args) => {
+    if (!ttsCleanupReleased) {
+      releaseTtsCleanup();
+      ttsCleanupReleased = true;
+    }
+    return originalStop(...args);
+  };
 
   const cfg = loadConfig();
   const requireMention =
@@ -378,6 +421,8 @@ export function createTelegramBot(opts: TelegramBotOptions) {
           { chatId, topic: multyCommand.topic },
           "telegram /multy command received",
         );
+        const publishEnabled = cfg.telegram?.multyPublish ?? true;
+        const notifyEnabled = cfg.telegram?.multyNotify ?? false;
         const lock = await readMultyLock(chatId);
         if (lock?.active) {
           const busyText =
@@ -417,6 +462,8 @@ export function createTelegramBot(opts: TelegramBotOptions) {
           topic: multyCommand.topic,
           statusMessage: progressStatus,
           logger,
+          publishEnabled,
+          notifyEnabled,
         });
         return;
       }
@@ -634,6 +681,7 @@ async function handleVoiceCommand(
   }
 
   let textToSpeak = command.text;
+  let sourceLabel: "direct" | "last" | "summary" = "direct";
 
   // If no text provided, get last assistant message from session
   if (!textToSpeak) {
@@ -657,15 +705,39 @@ async function handleVoiceCommand(
         await ctx.reply("No assistant message found in this session.");
         return true;
       }
-
-      await ctx.reply(`🔊 Generating voice message from last response...`);
+      sourceLabel = "last";
     } catch (error) {
       await ctx.reply(`❌ Error reading session: ${error instanceof Error ? error.message : String(error)}`);
       return true;
     }
-  } else {
-    await ctx.reply(`🔊 Generating voice message...`);
   }
+
+  const trimmedText = textToSpeak?.trim() ?? "";
+  const url = trimmedText ? extractFirstUrl(trimmedText) : null;
+  if (url && trimmedText.startsWith(url)) {
+    await ctx.reply("🌐 Fetching summary for voice...");
+    const summary = await fetchViaWebReader(url, { goal: "summary" });
+    if (summary.trim().startsWith("❌")) {
+      await ctx.reply(summary);
+      return true;
+    }
+    textToSpeak = summary;
+    sourceLabel = "summary";
+  }
+
+  textToSpeak = stripMarkdownForSpeech(textToSpeak ?? "");
+  if (!textToSpeak) {
+    await ctx.reply("❌ No usable text to synthesize.");
+    return true;
+  }
+
+  const statusLine =
+    sourceLabel === "summary"
+      ? "🔊 Generating voice message from summary..."
+      : sourceLabel === "last"
+        ? "🔊 Generating voice message from last response..."
+        : "🔊 Generating voice message...";
+  await ctx.reply(statusLine);
 
   // Generate TTS
   try {
@@ -1382,6 +1454,7 @@ async function editTelegramMessage(
   replyMarkup?: ReplyMarkup,
 ): Promise<void> {
   const formatted = formatTelegramMessage(text);
+  const plain = formatPlainText(text);
   try {
     await api.editMessageText(statusMessage.chatId, statusMessage.messageId, formatted, {
       parse_mode: "MarkdownV2",
@@ -1393,7 +1466,8 @@ async function editTelegramMessage(
       return;
     }
     if (PARSE_ERR_RE.test(errText)) {
-      await api.editMessageText(statusMessage.chatId, statusMessage.messageId, formatted, {
+      await api.editMessageText(statusMessage.chatId, statusMessage.messageId, plain, {
+        parse_mode: "MarkdownV2",
         reply_markup: replyMarkup,
       });
       return;
@@ -1406,10 +1480,12 @@ async function editTelegramMessageHtml(
   api: Bot["api"],
   statusMessage: StatusMessage,
   text: string,
+  replyMarkup?: ReplyMarkup,
 ): Promise<void> {
   try {
     await api.editMessageText(statusMessage.chatId, statusMessage.messageId, text, {
       parse_mode: "HTML",
+      reply_markup: replyMarkup,
     });
   } catch (err) {
     const errText = formatErrorMessage(err);
@@ -1443,142 +1519,97 @@ async function runMultyPipeline(params: {
   topic: string;
   statusMessage: StatusMessage | null;
   logger: ReturnType<typeof getChildLogger>;
+  publishEnabled?: boolean;
+  notifyEnabled?: boolean;
 }): Promise<void> {
-  const { ctx, chatId, topic, logger } = params;
+  const {
+    ctx,
+    chatId,
+    topic,
+    logger,
+    publishEnabled = true,
+    notifyEnabled = false,
+  } = params;
+  const runId = `multy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const startMs = Date.now();
   await ensureMultyLockDir();
-  await writeMultyLock(chatId, topic);
+  await writeMultyLock({ chatId, topic, runId, startedAt: startMs });
   multyInFlight.add(chatId);
   let statusMessage = params.statusMessage;
-  const workspace = process.cwd();
-  const tmpRoot = join(workspace, "tmp");
-  await mkdir(tmpRoot, { recursive: true });
-  const publishEnabled = true;
-  const notifyEnabled = false;
-  const ownerId = ctx.from?.id;
-  const runId = `multy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const jsonLogPath = join(tmpRoot, `${runId}.jsonl`);
-  const env = { ...process.env };
-  if (!env.ASK_CLI_AGENTS_ROOT) {
-    env.ASK_CLI_AGENTS_ROOT = "/home/almaz/TOOLS/ask_cli_agents";
-  }
-  const homeDir = env.HOME || "/home/almaz";
-  const extraPaths = [join(homeDir, "bin"), join(homeDir, ".local", "bin")];
-  env.PATH = [...extraPaths, env.PATH ?? ""].filter(Boolean).join(":");
-  const multyBin = env.MULTY_BIN?.trim() || "multy";
-  const models = resolveMultyModels(env);
-  const startMs = Date.now();
-  const cancelButton = createMultyCancelButton({ runId, ownerId });
-
-  if (!statusMessage) {
-    const initial = buildMultyStatusMessage({
-      topic,
-      models,
-      elapsedSeconds: 0,
-      steps: {},
-      publishEnabled,
-      notifyEnabled,
-    });
-    const status = await ctx.reply(initial, {
-      parse_mode: "HTML",
-      reply_markup: cancelButton,
-    });
-    statusMessage = { chatId: ctx.chat?.id ?? chatId, messageId: status.message_id };
-  } else {
-    try {
-      await ctx.api.editMessageReplyMarkup(
-        statusMessage.chatId,
-        statusMessage.messageId,
-        { reply_markup: cancelButton },
-      );
-    } catch (err) {
-      logVerbose(`multy cancel button attach failed: ${String(err)}`);
-    }
-  }
-
-  const child = spawn(
-    multyBin,
-    ["--theme", "silent", "--json-log", jsonLogPath, "--workspace", workspace, topic],
-    { env, cwd: workspace },
-  );
-
   let interval: NodeJS.Timer | null = null;
+  let lockHeartbeat: NodeJS.Timer | null = null;
+  let run: MultyRun | null = null;
+  let isFinished = false;
   const stopUpdates = () => {
     if (interval) {
       clearInterval(interval);
       interval = null;
     }
   };
-
-  const hasStatusMessage = Boolean(statusMessage);
-  if (!statusMessage) {
-    logger.error(
-      { topic },
-      "multy status message missing; proceeding without status updates",
-    );
-  }
-
-  const run: MultyRun | null = hasStatusMessage
-    ? {
-        runId,
-        chatId,
-        topic,
-        ownerId,
-        statusMessage: statusMessage!,
-        child,
-        models,
-        startedAt: startMs,
-        cancelRequested: false,
-        stopUpdates,
-      }
-    : null;
-  if (run) {
-    multyRuns.set(runId, run);
-  }
-
-  let stdout = "";
-  let stderr = "";
-  child.stdout?.on("data", (chunk) => {
-    stdout += chunk.toString();
-  });
-  child.stderr?.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
-
-  const readSteps = async () => {
-    try {
-      const content = await readFile(jsonLogPath, "utf8");
-      return parseMultyJsonl(content);
-    } catch {
-      return {};
+  const stopLockHeartbeat = () => {
+    if (lockHeartbeat) {
+      clearInterval(lockHeartbeat);
+      lockHeartbeat = null;
     }
   };
 
-  const updateStatus = async () => {
-    if (!statusMessage) return;
-    if (run?.cancelRequested) return;
-    const steps = await readSteps();
-    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
-    const text = buildMultyStatusMessage({
-      topic,
-      models,
-      elapsedSeconds,
-      steps,
-      publishEnabled,
-      notifyEnabled,
-    });
-    await editTelegramMessageHtml(ctx.api, statusMessage, text);
-  };
-
-  interval = setInterval(() => {
-    updateStatus().catch((err) => {
-      logVerbose(`multy status update failed: ${String(err)}`);
-    });
-  }, MULTY_STATUS_INTERVAL_MS);
-
-  await updateStatus();
-
   try {
-    const exit = await new Promise<{
+    const workspace = process.cwd();
+    const tmpRoot = join(workspace, "tmp");
+    await mkdir(tmpRoot, { recursive: true });
+    const ownerId = ctx.from?.id;
+    const jsonLogPath = join(tmpRoot, `${runId}.jsonl`);
+    const env = { ...process.env };
+    if (!env.ASK_CLI_AGENTS_ROOT) {
+      env.ASK_CLI_AGENTS_ROOT = "/home/almaz/TOOLS/ask_cli_agents";
+    }
+    const homeDir = env.HOME || "/home/almaz";
+    const extraPaths = [join(homeDir, "bin"), join(homeDir, ".local", "bin")];
+    env.PATH = [...extraPaths, env.PATH ?? ""].filter(Boolean).join(":");
+    const multyBin = env.MULTY_BIN?.trim() || "multy";
+    const models = resolveMultyModels(env);
+    const cancelButton = createMultyCancelButton({ runId, ownerId });
+
+    if (!statusMessage) {
+      const initial = buildMultyStatusMessage({
+        topic,
+        models,
+        elapsedSeconds: 0,
+        steps: {},
+        publishEnabled,
+        notifyEnabled,
+      });
+      const status = await ctx.reply(initial, {
+        parse_mode: "HTML",
+        reply_markup: cancelButton,
+      });
+      statusMessage = { chatId: ctx.chat?.id ?? chatId, messageId: status.message_id };
+    } else {
+      try {
+        await ctx.api.editMessageReplyMarkup(
+          statusMessage.chatId,
+          statusMessage.messageId,
+          { reply_markup: cancelButton },
+        );
+      } catch (err) {
+        logVerbose(`multy cancel button attach failed: ${String(err)}`);
+      }
+    }
+
+    let stdout = "";
+    let stderr = "";
+    const child = spawn(
+      multyBin,
+      ["--theme", "silent", "--json-log", jsonLogPath, "--workspace", workspace, topic],
+      { env, cwd: workspace },
+    );
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    const exitPromise = new Promise<{
       code: number | null;
       signal: NodeJS.Signals | null;
       error?: Error;
@@ -1596,8 +1627,99 @@ async function runMultyPipeline(params: {
       child.once("close", (code, signal) => finish({ code, signal }));
       child.once("error", (error) => finish({ code: null, signal: null, error }));
     });
+    const childPid = typeof child.pid === "number" ? child.pid : undefined;
+    await writeMultyLock({
+      chatId,
+      topic,
+      runId,
+      pid: childPid,
+      startedAt: startMs,
+    });
+
+    const hasStatusMessage = Boolean(statusMessage);
+    if (!statusMessage) {
+      logger.error(
+        { topic },
+        "multy status message missing; proceeding without status updates",
+      );
+    }
+
+    run = hasStatusMessage
+      ? {
+          runId,
+          chatId,
+          topic,
+          ownerId,
+          statusMessage: statusMessage!,
+          child,
+          models,
+          startedAt: startMs,
+          cancelRequested: false,
+          stopUpdates,
+        }
+      : null;
+    if (run) {
+      multyRuns.set(runId, run);
+    }
+
+    const readSteps = async () => {
+      try {
+        const content = await readFile(jsonLogPath, "utf8");
+        return parseMultyJsonl(content);
+      } catch {
+        return {};
+      }
+    };
+
+    const updateStatus = async () => {
+      if (!statusMessage) return;
+      if (run?.cancelRequested) return;
+      const steps = await readSteps();
+      const elapsedSeconds = Math.max(
+        0,
+        Math.floor((Date.now() - startMs) / 1000),
+      );
+      const text = buildMultyStatusMessage({
+        topic,
+        models,
+        elapsedSeconds,
+        steps,
+        publishEnabled,
+        notifyEnabled,
+      });
+      await editTelegramMessageHtml(ctx.api, statusMessage, text, cancelButton);
+    };
+
+    interval = setInterval(() => {
+      updateStatus().catch((err) => {
+        logVerbose(`multy status update failed: ${String(err)}`);
+      });
+    }, MULTY_STATUS_INTERVAL_MS);
+
+    lockHeartbeat = setInterval(() => {
+      if (isFinished) return;
+      writeMultyLock({
+        chatId,
+        topic,
+        runId,
+        pid: typeof child.pid === "number" ? child.pid : undefined,
+        startedAt: startMs,
+      }).catch((err) => {
+        logVerbose(`multy lock heartbeat failed: ${String(err)}`);
+      });
+    }, MULTY_LOCK_HEARTBEAT_MS);
+    if (typeof lockHeartbeat.unref === "function") {
+      lockHeartbeat.unref();
+    }
+
+    await updateStatus().catch((err) => {
+      logVerbose(`multy status update failed: ${String(err)}`);
+    });
+
+    const exit = await exitPromise;
 
     stopUpdates();
+    stopLockHeartbeat();
 
     if (run?.cancelRequested) {
       const elapsedSeconds = Math.max(
@@ -1709,7 +1831,9 @@ async function runMultyPipeline(params: {
       await clearTelegramReplyMarkup(ctx.api, statusMessage);
     }
   } finally {
+    isFinished = true;
     stopUpdates();
+    stopLockHeartbeat();
     if (run) {
       multyRuns.delete(runId);
     }
@@ -1729,31 +1853,69 @@ function multyLockPath(chatId: number): string {
 async function readMultyLock(chatId: number): Promise<{
   active: boolean;
   pid?: number;
+  runId?: string;
 }> {
   const path = multyLockPath(chatId);
+  let stats: { mtimeMs: number };
   try {
-    await stat(path);
-  } catch {
-    return { active: false };
-  }
-  try {
+    stats = await stat(path);
     const raw = await readFile(path, "utf8");
-    const payload = JSON.parse(raw) as { pid?: number };
-    if (payload.pid && isProcessAlive(payload.pid)) {
-      return { active: true, pid: payload.pid };
+    const payload = JSON.parse(raw) as MultyLockPayload;
+    const now = Date.now();
+    const updatedAt =
+      typeof payload.updatedAt === "number"
+        ? payload.updatedAt
+        : typeof payload.startedAt === "number"
+          ? payload.startedAt
+          : undefined;
+    if (updatedAt && now - updatedAt > MULTY_LOCK_STALE_MS) {
+      await clearMultyLock(chatId);
+      return { active: false };
     }
-  } catch {
+    const pid = typeof payload.pid === "number" ? payload.pid : undefined;
+    if (pid !== undefined && isProcessAlive(pid)) {
+      return { active: true, pid, runId: payload.runId };
+    }
+    if (pid === undefined && updatedAt && now - updatedAt <= MULTY_LOCK_STALE_MS) {
+      return { active: true, runId: payload.runId };
+    }
+  } catch (err: any) {
+    // If stat failed, file doesn't exist
+    if (err?.code === "ENOENT") {
+      return { active: false };
+    }
+    // If JSON parse failed or other read error, clear corrupted file (v4 fix)
+    if (err instanceof SyntaxError || err?.code !== "ENOENT") {
+      await clearMultyLock(chatId);
+      return { active: false };
+    }
+    // If file exists but is stale, clear it
+    if (stats && Date.now() - stats.mtimeMs > MULTY_LOCK_STALE_MS) {
+      await clearMultyLock(chatId);
+      return { active: false };
+    }
+    // File exists but can't be read - treat as active to be safe
     return { active: true };
   }
   await clearMultyLock(chatId);
   return { active: false };
 }
 
-async function writeMultyLock(chatId: number, topic: string): Promise<void> {
+async function writeMultyLock(params: {
+  chatId: number;
+  topic: string;
+  runId: string;
+  pid?: number;
+  startedAt: number;
+  updatedAt?: number;
+}): Promise<void> {
+  const { chatId, topic, runId, pid, startedAt, updatedAt } = params;
   const payload = {
-    pid: process.pid,
+    pid,
+    runId,
     topic,
-    startedAt: Date.now(),
+    startedAt,
+    updatedAt: updatedAt ?? Date.now(),
   };
   await writeFile(multyLockPath(chatId), JSON.stringify(payload), "utf8");
 }
@@ -2031,8 +2193,7 @@ async function handleDeepResearchCallback(
     const deliveryContext = {
       sendMessage: async (text: string) => {
         try {
-          const formatted = formatTelegramMessage(`○ ${text}`);
-          await ctx.reply(truncateForTelegram(formatted), {
+          await ctx.reply(truncateForTelegram(text), {
             parse_mode: "MarkdownV2",
           });
         } catch {
@@ -2040,11 +2201,16 @@ async function handleDeepResearchCallback(
         }
       },
       sendError: async (text: string) => {
-        const formatted = formatTelegramMessage(`✂︎ ${text}`);
-        await ctx.reply(formatted, {
-          parse_mode: "MarkdownV2",
-          reply_markup: createRetryButton(normalizedTopic, effectiveOwnerId),
-        });
+        try {
+          await ctx.reply(truncateForTelegram(text), {
+            parse_mode: "MarkdownV2",
+            reply_markup: createRetryButton(normalizedTopic, effectiveOwnerId),
+          });
+        } catch {
+          await ctx.reply(truncateForTelegram(text), {
+            reply_markup: createRetryButton(normalizedTopic, effectiveOwnerId),
+          });
+        }
       },
     };
 
@@ -2347,6 +2513,7 @@ async function sendTelegramText(
   runtime: RuntimeEnv,
 ): Promise<number | undefined> {
   const formatted = formatTelegramMessage(`○ ${text}`);
+  const plain = formatPlainText(`○ ${text}`);
   try {
     const res = await bot.api.sendMessage(chatId, formatted, {
       parse_mode: "MarkdownV2",
@@ -2356,9 +2523,11 @@ async function sendTelegramText(
     const errText = formatErrorMessage(err);
     if (PARSE_ERR_RE.test(errText)) {
       runtime.log?.(
-        `telegram markdown parse failed; retrying without formatting: ${errText}`,
+        `telegram markdown parse failed; retrying with plain text: ${errText}`,
       );
-      const res = await bot.api.sendMessage(chatId, formatted, {});
+      const res = await bot.api.sendMessage(chatId, plain, {
+        parse_mode: "MarkdownV2",
+      });
       return res.message_id;
     }
     throw err;
