@@ -140,6 +140,10 @@ export type TelegramConfig = {
   webhookPath?: string;
   /** Enable automatic LLM-based message categorization. Default: false. */
   autoCategorize?: boolean;
+  /** Enable publishing for /multy pipeline. Default: true. */
+  multyPublish?: boolean;
+  /** Enable notify step for /multy pipeline. Default: false. */
+  multyNotify?: boolean;
 };
 
 export type DiscordConfig = {
@@ -889,6 +893,8 @@ const ClawdisSchema = z.object({
       webhookSecret: z.string().optional(),
       webhookPath: z.string().optional(),
       autoCategorize: z.boolean().optional(),
+      multyPublish: z.boolean().optional(),
+      multyNotify: z.boolean().optional(),
     })
     .optional(),
   discord: z
@@ -1437,6 +1443,8 @@ function applyTelegramEnvOverrides(config: ClawdisConfig): ClawdisConfig {
     webhookSecret: config.telegram?.webhookSecret,
     webhookPath: config.telegram?.webhookPath,
     autoCategorize: config.telegram?.autoCategorize ?? false,
+    multyPublish: config.telegram?.multyPublish,
+    multyNotify: config.telegram?.multyNotify,
   };
 
   if (hasAutoCategorize) {
