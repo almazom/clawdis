@@ -7,17 +7,20 @@ set -uo pipefail
 
 VERBOSE=false
 JSON_OUTPUT=false
-GATEWAY_PORT=18789
-BRIDGE_PORT=18790
-BROWSER_PORT=18791
-CANVAS_PORT=18793
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CLAWDIS_HOME="${CLAWDIS_HOME:-$HOME}"
+CLAWDIS_DIR="${CLAWDIS_DIR:-${CLAWDIS_HOME}/.clawdis}"
+CLAWDIS_ENV_FILE="${CLAWDIS_ENV_FILE:-${CLAWDIS_DIR}/secrets.env}"
+CLAWDIS_CONFIG_PATH="${CLAWDIS_CONFIG_PATH:-${CLAWDIS_DIR}/clawdis.json}"
+export CLAWDIS_CONFIG_PATH
 
 get_telegram_proxy() {
     local proxy=""
     if command -v python3 >/dev/null 2>&1; then
         proxy=$(python3 - <<'PY' 2>/dev/null
 import json, os, sys
-path = os.path.expanduser("~/.clawdis/clawdis.json")
+path = os.environ.get("CLAWDIS_CONFIG_PATH") or os.path.expanduser("~/.clawdis/clawdis.json")
 try:
     with open(path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
@@ -33,7 +36,8 @@ PY
 const fs = require("fs");
 const path = require("path");
 try {
-  const cfgPath = path.join(process.env.HOME || "", ".clawdis", "clawdis.json");
+  const cfgPath = process.env.CLAWDIS_CONFIG_PATH ||
+    path.join(process.env.HOME || "", ".clawdis", "clawdis.json");
   const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
   const proxy = (cfg.telegram && cfg.telegram.proxy) || "";
   if (typeof proxy === "string") process.stdout.write(proxy);
@@ -42,6 +46,21 @@ NODE
 )
     fi
     echo "$proxy"
+}
+
+load_env() {
+    set +u
+    if [ -n "${CLAWDIS_ENV_FILE:-}" ] && [ -f "$CLAWDIS_ENV_FILE" ]; then
+        set -a
+        source "$CLAWDIS_ENV_FILE"
+        set +a
+    fi
+    if [ -f "${REPO_ROOT}/.env" ] && [ "${CLAWDIS_SKIP_DOTENV:-0}" != "1" ]; then
+        set -a
+        source "${REPO_ROOT}/.env"
+        set +a
+    fi
+    set -u
 }
 
 find_gateway_pid() {
@@ -56,7 +75,7 @@ find_gateway_pid() {
         echo "$pid"
         return
     fi
-    pid=$(pgrep -f "gateway --port 18789" | head -1 || true)
+    pid=$(pgrep -f "gateway --port ${GATEWAY_PORT}" | head -1 || true)
     if [ -n "$pid" ]; then
         echo "$pid"
         return
@@ -70,6 +89,15 @@ for arg in "$@"; do
         --json|-j) JSON_OUTPUT=true ;;
     esac
 done
+
+# Load env overrides (ports, tokens, etc.)
+load_env
+
+# Port profile (defaults)
+GATEWAY_PORT="${CLAWDIS_GATEWAY_PORT:-18789}"
+BRIDGE_PORT="${CLAWDIS_BRIDGE_PORT:-$((GATEWAY_PORT + 1))}"
+BROWSER_PORT="${CLAWDIS_BROWSER_PORT:-$((GATEWAY_PORT + 2))}"
+CANVAS_PORT="${CLAWDIS_CANVAS_HOST_PORT:-$((GATEWAY_PORT + 4))}"
 
 # Health check results
 declare -A CHECKS
@@ -108,14 +136,14 @@ check_telegram_api() {
     local token="${TELEGRAM_BOT_TOKEN:-}"
     if [ -z "$token" ]; then
         # Try to read from .env
-        if [ -f "/home/almaz/zoo_flow/clawdis/.env" ]; then
-            token=$(grep TELEGRAM_BOT_TOKEN /home/almaz/zoo_flow/clawdis/.env | cut -d= -f2- || true)
+        if [ -f "${REPO_ROOT}/.env" ]; then
+            token=$(grep TELEGRAM_BOT_TOKEN "${REPO_ROOT}/.env" | cut -d= -f2- || true)
         fi
     fi
     if [ -z "$token" ]; then
         # Try to read from secrets.env
-        if [ -f "/home/almaz/.clawdis/secrets.env" ]; then
-            token=$(grep TELEGRAM_BOT_TOKEN /home/almaz/.clawdis/secrets.env | cut -d= -f2- || true)
+        if [ -f "$CLAWDIS_ENV_FILE" ]; then
+            token=$(grep TELEGRAM_BOT_TOKEN "$CLAWDIS_ENV_FILE" | cut -d= -f2- || true)
         fi
     fi
 
@@ -141,7 +169,7 @@ check_telegram_api() {
 }
 
 check_disk_space() {
-    local usage=$(df /home/almaz/.clawdis 2>/dev/null | tail -1 | awk '{print $5}' | tr -d '%')
+    local usage=$(df "$CLAWDIS_DIR" 2>/dev/null | tail -1 | awk '{print $5}' | tr -d '%')
     if [ -n "$usage" ] && [ "$usage" -lt 90 ]; then
         CHECKS["disk_space"]="ok (${usage}%)"
         return 0
@@ -152,7 +180,7 @@ check_disk_space() {
 }
 
 check_log_size() {
-    local log_size=$(du -sm /home/almaz/.clawdis/*.log 2>/dev/null | awk '{sum+=$1} END {print sum}')
+    local log_size=$(du -sm "$CLAWDIS_DIR"/*.log 2>/dev/null | awk '{sum+=$1} END {print sum}')
     if [ -n "$log_size" ] && [ "$log_size" -lt 500 ]; then
         CHECKS["log_size"]="ok (${log_size}MB)"
         return 0

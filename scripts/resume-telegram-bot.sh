@@ -9,6 +9,31 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CLAWDIS_HOME="${CLAWDIS_HOME:-$HOME}"
+CLAWDIS_DIR="${CLAWDIS_DIR:-${CLAWDIS_HOME}/.clawdis}"
+CLAWDIS_ENV_FILE="${CLAWDIS_ENV_FILE:-${CLAWDIS_DIR}/secrets.env}"
+
+load_env() {
+    set +u
+    if [ -n "${CLAWDIS_ENV_FILE:-}" ] && [ -f "$CLAWDIS_ENV_FILE" ]; then
+        set -a
+        source "$CLAWDIS_ENV_FILE"
+        set +a
+    fi
+    if [ -f "${REPO_ROOT}/.env" ] && [ "${CLAWDIS_SKIP_DOTENV:-0}" != "1" ]; then
+        set -a
+        source "${REPO_ROOT}/.env"
+        set +a
+    fi
+    set -u
+}
+
+load_env
+
+GATEWAY_PORT="${CLAWDIS_GATEWAY_PORT:-18789}"
+SYSTEMD_UNIT="${CLAWDIS_SYSTEMD_UNIT:-clawdis-gateway}"
 
 # Function to print colored output
 print_success() {
@@ -49,7 +74,7 @@ fi
 
 echo
 echo "2. Checking service status..."
-sudo systemctl status clawdis-gateway --no-pager -l || true
+sudo systemctl status "$SYSTEMD_UNIT" --no-pager -l || true
 
 echo
 echo "3. Taking action..."
@@ -59,18 +84,18 @@ ACTION=${ACTION:-restart}
 case $ACTION in
     start)
         echo "Starting Telegram bot service..."
-        sudo systemctl start clawdis-gateway
+        sudo systemctl start "$SYSTEMD_UNIT"
         print_success "Service start command issued"
         ;;
     stop)
         echo "Stopping Telegram bot service..."
-        sudo systemctl stop clawdis-gateway
+        sudo systemctl stop "$SYSTEMD_UNIT"
         print_success "Service stop command issued"
         ;;
     restart)
         echo "Restarting Telegram bot service..."
         sudo systemctl daemon-reload
-        sudo systemctl restart clawdis-gateway
+        sudo systemctl restart "$SYSTEMD_UNIT"
         print_success "Service restart command issued"
         ;;
     status)
@@ -78,7 +103,7 @@ case $ACTION in
         ;;
     logs)
         echo "Following logs (press Ctrl+C to exit)..."
-        sudo journalctl -u clawdis-gateway -f
+        sudo journalctl -u "$SYSTEMD_UNIT" -f
         exit 0
         ;;
     *)
@@ -93,26 +118,26 @@ sleep 3
 
 echo
 echo "5. Current service status:"
-sudo systemctl status clawdis-gateway --no-pager -l
+sudo systemctl status "$SYSTEMD_UNIT" --no-pager -l
 
 echo
 echo "6. Port status:"
-if sudo ss -tulpn | grep -q ":18789"; then
-    print_success "Gateway port 18789 is listening"
+if sudo ss -tulpn | grep -q ":${GATEWAY_PORT}"; then
+    print_success "Gateway port ${GATEWAY_PORT} is listening"
 else
-    print_error "Gateway port 18789 is NOT listening"
+    print_error "Gateway port ${GATEWAY_PORT} is NOT listening"
 fi
 
 echo
 echo "7. Recent service logs:"
-sudo journalctl -u clawdis-gateway -n 20 --no-pager
+sudo journalctl -u "$SYSTEMD_UNIT" -n 20 --no-pager
 
 echo
 echo "8. Testing Telegram bot..."
 read -p "Enter your Telegram user ID to test: " USER_ID
 if [ -n "$USER_ID" ]; then
     echo "Sending test message..."
-    cd /home/almaz/zoo_flow/clawdis
+    cd "$REPO_ROOT"
     if pnpm clawdis send --provider telegram --to "$USER_ID" --message "Bot resumed successfully!"; then
         print_success "Test message sent successfully!"
     else
@@ -124,8 +149,8 @@ echo
 echo "=== Script completed ==="
 echo
 echo "Quick commands for future use:"
-echo "  sudo systemctl status clawdis-gateway    # Check status"
-echo "  sudo journalctl -u clawdis-gateway -f   # Follow logs"
-echo "  sudo systemctl restart clawdis-gateway  # Restart service"
-echo "  sudo systemctl stop clawdis-gateway     # Stop service"
-echo "  sudo systemctl start clawdis-gateway    # Start service"
+echo "  sudo systemctl status ${SYSTEMD_UNIT}    # Check status"
+echo "  sudo journalctl -u ${SYSTEMD_UNIT} -f   # Follow logs"
+echo "  sudo systemctl restart ${SYSTEMD_UNIT}  # Restart service"
+echo "  sudo systemctl stop ${SYSTEMD_UNIT}     # Stop service"
+echo "  sudo systemctl start ${SYSTEMD_UNIT}    # Start service"

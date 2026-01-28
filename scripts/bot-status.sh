@@ -9,6 +9,13 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CLAWDIS_HOME="${CLAWDIS_HOME:-$HOME}"
+CLAWDIS_DIR="${CLAWDIS_DIR:-${CLAWDIS_HOME}/.clawdis}"
+CLAWDIS_ENV_FILE="${CLAWDIS_ENV_FILE:-${CLAWDIS_DIR}/secrets.env}"
+CLAWDIS_CONFIG_PATH="${CLAWDIS_CONFIG_PATH:-${CLAWDIS_DIR}/clawdis.json}"
+export CLAWDIS_CONFIG_PATH
 
 print_header() {
     echo ""
@@ -44,7 +51,7 @@ get_telegram_proxy() {
     if command -v python3 >/dev/null 2>&1; then
         proxy=$(python3 - <<'PY' 2>/dev/null
 import json, os, sys
-path = os.path.expanduser("~/.clawdis/clawdis.json")
+path = os.environ.get("CLAWDIS_CONFIG_PATH") or os.path.expanduser("~/.clawdis/clawdis.json")
 try:
     with open(path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
@@ -60,7 +67,8 @@ PY
 const fs = require("fs");
 const path = require("path");
 try {
-  const cfgPath = path.join(process.env.HOME || "", ".clawdis", "clawdis.json");
+  const cfgPath = process.env.CLAWDIS_CONFIG_PATH ||
+    path.join(process.env.HOME || "", ".clawdis", "clawdis.json");
   const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
   const proxy = (cfg.telegram && cfg.telegram.proxy) || "";
   if (typeof proxy === "string") process.stdout.write(proxy);
@@ -70,6 +78,29 @@ NODE
     fi
     echo "$proxy"
 }
+
+load_env() {
+    set +u
+    if [ -n "${CLAWDIS_ENV_FILE:-}" ] && [ -f "$CLAWDIS_ENV_FILE" ]; then
+        set -a
+        source "$CLAWDIS_ENV_FILE"
+        set +a
+    fi
+    if [ -f "${REPO_ROOT}/.env" ] && [ "${CLAWDIS_SKIP_DOTENV:-0}" != "1" ]; then
+        set -a
+        source "${REPO_ROOT}/.env"
+        set +a
+    fi
+    set -u
+}
+
+load_env
+
+GATEWAY_PORT="${CLAWDIS_GATEWAY_PORT:-18789}"
+BRIDGE_PORT="${CLAWDIS_BRIDGE_PORT:-$((GATEWAY_PORT + 1))}"
+BROWSER_PORT="${CLAWDIS_BROWSER_PORT:-$((GATEWAY_PORT + 2))}"
+CANVAS_PORT="${CLAWDIS_CANVAS_HOST_PORT:-$((GATEWAY_PORT + 4))}"
+SYSTEMD_UNIT="${CLAWDIS_SYSTEMD_UNIT:-clawdis-gateway}"
 
 # Process Status
 print_section "PROCESS STATUS"
@@ -96,17 +127,20 @@ check_port() {
         echo -e "  $2 (port $1): $(status_icon fail) NOT LISTENING"
     fi
 }
-check_port 18789 "Gateway"
-check_port 18790 "Bridge"
-check_port 18791 "Browser"
-check_port 18793 "Canvas"
+check_port "$GATEWAY_PORT" "Gateway"
+check_port "$BRIDGE_PORT" "Bridge"
+check_port "$BROWSER_PORT" "Browser"
+check_port "$CANVAS_PORT" "Canvas"
 echo ""
 
 # Telegram API
 print_section "TELEGRAM API"
-TOKEN=$(grep TELEGRAM_BOT_TOKEN /home/almaz/zoo_flow/clawdis/.env 2>/dev/null | cut -d= -f2- || echo "")
+TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
-    TOKEN=$(grep TELEGRAM_BOT_TOKEN /home/almaz/.clawdis/secrets.env 2>/dev/null | cut -d= -f2- || echo "")
+    TOKEN=$(grep TELEGRAM_BOT_TOKEN "${REPO_ROOT}/.env" 2>/dev/null | cut -d= -f2- || echo "")
+fi
+if [ -z "$TOKEN" ]; then
+    TOKEN=$(grep TELEGRAM_BOT_TOKEN "$CLAWDIS_ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "")
 fi
 if [ -n "$TOKEN" ]; then
     proxy=$(get_telegram_proxy)
@@ -128,9 +162,12 @@ echo ""
 
 # Z.ai API
 print_section "Z.AI API"
-API_KEY=$(grep ANTHROPIC_API_KEY /home/almaz/zoo_flow/clawdis/.env 2>/dev/null | cut -d= -f2- || echo "")
+API_KEY="${ANTHROPIC_API_KEY:-}"
 if [ -z "$API_KEY" ]; then
-    API_KEY=$(grep ANTHROPIC_API_KEY /home/almaz/.clawdis/secrets.env 2>/dev/null | cut -d= -f2- || echo "")
+    API_KEY=$(grep ANTHROPIC_API_KEY "${REPO_ROOT}/.env" 2>/dev/null | cut -d= -f2- || echo "")
+fi
+if [ -z "$API_KEY" ]; then
+    API_KEY=$(grep ANTHROPIC_API_KEY "$CLAWDIS_ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "")
 fi
 if [ -n "$API_KEY" ]; then
     response=$(curl -q -s --max-time 5 -H "x-api-key: $API_KEY" "https://api.z.ai/api/anthropic/v1/models" 2>/dev/null || echo "error")
@@ -146,7 +183,7 @@ echo ""
 
 # Logs
 print_section "LOG FILES"
-for logfile in /home/almaz/.clawdis/*.log; do
+for logfile in "$CLAWDIS_DIR"/*.log; do
     [ -f "$logfile" ] || continue
     name=$(basename "$logfile")
     size=$(du -h "$logfile" 2>/dev/null | cut -f1)
@@ -157,19 +194,19 @@ echo ""
 
 # Recent Errors
 print_section "RECENT ERRORS (last 5)"
-tail -5 /home/almaz/.clawdis/gateway-error.log 2>/dev/null | while read line; do
+tail -5 "${CLAWDIS_DIR}/gateway-error.log" 2>/dev/null | while read line; do
     echo "  $line"
 done || echo "  (no errors)"
 echo ""
 
 # Systemd Service
 print_section "SYSTEMD SERVICE"
-if systemctl is-active --quiet clawdis-gateway 2>/dev/null; then
+if systemctl is-active --quiet "$SYSTEMD_UNIT" 2>/dev/null; then
     echo -e "  Service:  $(status_icon ok) ACTIVE"
 else
     echo -e "  Service:  $(status_icon fail) INACTIVE"
 fi
-if systemctl is-enabled --quiet clawdis-gateway 2>/dev/null; then
+if systemctl is-enabled --quiet "$SYSTEMD_UNIT" 2>/dev/null; then
     echo -e "  Enabled:  $(status_icon ok) YES"
 else
     echo -e "  Enabled:  $(status_icon fail) NO"
@@ -179,7 +216,7 @@ echo ""
 # Quick Commands
 echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"
 echo -e "${YELLOW}QUICK COMMANDS:${NC}"
-echo "  Restart:  sudo systemctl restart clawdis-gateway"
-echo "  Logs:     sudo journalctl -u clawdis-gateway -f"
+echo "  Restart:  sudo systemctl restart ${SYSTEMD_UNIT}"
+echo "  Logs:     sudo journalctl -u ${SYSTEMD_UNIT} -f"
 echo "  Health:   ./scripts/health-check.sh --verbose"
 echo ""

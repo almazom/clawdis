@@ -8,7 +8,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="/home/almaz/.clawdis"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CLAWDIS_HOME="${CLAWDIS_HOME:-$HOME}"
+CLAWDIS_DIR="${CLAWDIS_DIR:-${CLAWDIS_HOME}/.clawdis}"
+CLAWDIS_ENV_FILE="${CLAWDIS_ENV_FILE:-${CLAWDIS_DIR}/secrets.env}"
+CLAWDIS_CONFIG_PATH="${CLAWDIS_CONFIG_PATH:-${CLAWDIS_DIR}/clawdis.json}"
+export CLAWDIS_CONFIG_PATH
+export CLAWDIS_ENV_FILE
+LOG_DIR="${CLAWDIS_DIR}"
+SYSTEMD_UNIT="${CLAWDIS_SYSTEMD_UNIT:-clawdis-gateway}"
 MAX_LOG_SIZE_MB=100
 MAX_LOG_AGE_DAYS=7
 LOCK_FILE="/tmp/clawdis-watchdog.lock"
@@ -33,14 +41,14 @@ mkdir -p "$LOG_DIR"
 
 load_env() {
     set +u
-    if [ -f "/home/almaz/zoo_flow/clawdis/.env" ]; then
+    if [ -f "${REPO_ROOT}/.env" ] && [ "${CLAWDIS_SKIP_DOTENV:-0}" != "1" ]; then
         set -a
-        source /home/almaz/zoo_flow/clawdis/.env
+        source "${REPO_ROOT}/.env"
         set +a
     fi
-    if [ -f "/home/almaz/.clawdis/secrets.env" ]; then
+    if [ -f "$CLAWDIS_ENV_FILE" ]; then
         set -a
-        source /home/almaz/.clawdis/secrets.env
+        source "$CLAWDIS_ENV_FILE"
         set +a
     fi
     set -u
@@ -51,7 +59,7 @@ get_telegram_proxy() {
     if command -v python3 >/dev/null 2>&1; then
         proxy=$(python3 - <<'PY' 2>/dev/null
 import json, os, sys
-path = os.path.expanduser("~/.clawdis/clawdis.json")
+path = os.environ.get("CLAWDIS_CONFIG_PATH") or os.path.expanduser("~/.clawdis/clawdis.json")
 try:
     with open(path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
@@ -67,7 +75,8 @@ PY
 const fs = require("fs");
 const path = require("path");
 try {
-  const cfgPath = path.join(process.env.HOME || "", ".clawdis", "clawdis.json");
+  const cfgPath = process.env.CLAWDIS_CONFIG_PATH ||
+    path.join(process.env.HOME || "", ".clawdis", "clawdis.json");
   const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
   const proxy = (cfg.telegram && cfg.telegram.proxy) || "";
   if (typeof proxy === "string") process.stdout.write(proxy);
@@ -154,13 +163,30 @@ check_telegram() {
     return 0
 }
 
+ensure_user_systemd_env() {
+    if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    fi
+    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR}/bus" ]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+    fi
+}
+
 # Restart service
 restart_service() {
-    log "Attempting to restart clawdis-gateway service..."
+    log "Attempting to restart ${SYSTEMD_UNIT} service..."
 
-    # Try systemctl first
+    # Try user systemd first (preferred for this host).
     if command -v systemctl &> /dev/null; then
-        if sudo -n systemctl restart clawdis-gateway 2>/dev/null; then
+        ensure_user_systemd_env
+        if systemctl --user status "$SYSTEMD_UNIT" >/dev/null 2>&1; then
+            if systemctl --user restart "$SYSTEMD_UNIT" 2>/dev/null; then
+                log "Service restarted via systemctl --user"
+                return 0
+            fi
+        fi
+
+        if sudo -n systemctl restart "$SYSTEMD_UNIT" 2>/dev/null; then
             log "Service restarted via systemctl"
             return 0
         fi
@@ -172,8 +198,8 @@ restart_service() {
     sleep 2
 
     # Start in background
-    cd /home/almaz/zoo_flow/clawdis
-    source .env 2>/dev/null || true
+    load_env
+    cd "${REPO_ROOT}"
     nohup "$SCRIPT_DIR/start-gateway.sh" >> "$LOG_DIR/gateway.log" 2>> "$LOG_DIR/gateway-error.log" &
 
     sleep 5
@@ -188,6 +214,7 @@ restart_service() {
 
 # Main logic
 main() {
+    load_env
     rotate_logs
 
     local needs_restart=false

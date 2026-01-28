@@ -47,13 +47,41 @@ if [ ! -d "$WORK_DIR" ]; then
 fi
 cd "$WORK_DIR"
 
-# Load environment from .env if exists (for development)
-if [ -f ".env" ]; then
+# Ensure only one gateway instance runs at a time.
+LOCK_FILE="${CLAWDIS_GATEWAY_LOCK_FILE:-/tmp/clawdis-gateway.lock}"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    error "Gateway lock held at ${LOCK_FILE}; another instance is running"
+    exit 1
+fi
+echo $$ >&9
+
+# Load environment files (optional)
+if [ -n "${CLAWDIS_ENV_FILE:-}" ] && [ -f "$CLAWDIS_ENV_FILE" ]; then
+    set -a
+    source "$CLAWDIS_ENV_FILE"
+    set +a
+    log "Loaded env file: ${CLAWDIS_ENV_FILE}"
+fi
+
+if [ -f ".env" ] && [ "${CLAWDIS_SKIP_DOTENV:-0}" != "1" ]; then
     set -a
     source "$WORK_DIR/.env"
     set +a
     log "Loaded .env file"
 fi
+
+# Port profile
+GATEWAY_PORT="${CLAWDIS_GATEWAY_PORT:-18789}"
+BRIDGE_PORT="${CLAWDIS_BRIDGE_PORT:-$((GATEWAY_PORT + 1))}"
+BROWSER_PORT="${CLAWDIS_BROWSER_PORT:-$((GATEWAY_PORT + 2))}"
+CANVAS_PORT="${CLAWDIS_CANVAS_HOST_PORT:-$((GATEWAY_PORT + 4))}"
+BROWSER_CONTROL_URL="${CLAWDIS_BROWSER_CONTROL_URL:-http://127.0.0.1:${BROWSER_PORT}}"
+
+export CLAWDIS_GATEWAY_PORT="${GATEWAY_PORT}"
+export CLAWDIS_BRIDGE_PORT="${BRIDGE_PORT}"
+export CLAWDIS_CANVAS_HOST_PORT="${CANVAS_PORT}"
+export CLAWDIS_BROWSER_CONTROL_URL="${BROWSER_CONTROL_URL}"
 
 # Verify critical environment variables
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -66,13 +94,14 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     exit 1
 fi
 
-log "Starting gateway on port 18789..."
+log "Starting gateway on port ${GATEWAY_PORT}..."
+log "Ports: bridge=${BRIDGE_PORT} browser=${BROWSER_CONTROL_URL} canvas=${CANVAS_PORT}"
 
 # Prefer compiled dist to avoid tsx/esbuild overhead in production.
 DIST_ENTRY="${WORK_DIR}/dist/index.js"
 if [ -f "$DIST_ENTRY" ]; then
     log "Using compiled gateway entry: ${DIST_ENTRY}"
-    exec node "$DIST_ENTRY" gateway --port 18789 --allow-unconfigured --verbose
+    exec node "$DIST_ENTRY" gateway --port "${GATEWAY_PORT}" --allow-unconfigured --verbose
 fi
 
 # Fallback to tsx via pnpm (dev mode)
@@ -82,4 +111,4 @@ if [ ! -f "$PNPM_PATH" ]; then
     exit 1
 fi
 log "Compiled entry missing; falling back to pnpm/tsx"
-exec "$PNPM_PATH" clawdis gateway --port 18789 --allow-unconfigured
+exec "$PNPM_PATH" clawdis gateway --port "${GATEWAY_PORT}" --allow-unconfigured
