@@ -2198,6 +2198,10 @@ export async function startGatewayServer(
   const canvasHostPort = (() => {
     const configured = cfgAtStart.canvasHost?.port;
     if (typeof configured === "number" && configured > 0) return configured;
+    if (process.env.CLAWDIS_CANVAS_HOST_PORT !== undefined) {
+      const parsed = Number.parseInt(process.env.CLAWDIS_CANVAS_HOST_PORT, 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 18793;
+    }
     return 18793;
   })();
 

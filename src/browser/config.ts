@@ -33,8 +33,9 @@ export function resolveBrowserConfig(
   cfg: BrowserConfig | undefined,
 ): ResolvedBrowserConfig {
   const enabled = cfg?.enabled ?? DEFAULT_CLAWD_BROWSER_ENABLED;
+  const envControlUrl = (process.env.CLAWDIS_BROWSER_CONTROL_URL ?? "").trim();
   const controlUrl = (
-    cfg?.controlUrl ?? DEFAULT_CLAWD_BROWSER_CONTROL_URL
+    envControlUrl || cfg?.controlUrl || DEFAULT_CLAWD_BROWSER_CONTROL_URL
   ).trim();
   const parsed = new URL(controlUrl);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
