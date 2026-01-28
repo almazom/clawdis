@@ -113,11 +113,11 @@ describeE2E("Deep Research E2E (dry-run)", () => {
 
       const delivery = messages.resultDelivery(parsed!);
 
-      expect(delivery).toContain("✅ Deep Research завершен");
-      expect(delivery).toContain("📝 Краткий ответ");
-      expect(delivery).toContain("📋 Основные пункты");
-      expect(delivery).toContain("💭 Мнение");
-      expect(delivery).toContain("🔗 Полный отчет");
+      expect(delivery).toContain("○ Deep Research");
+      expect(delivery).toContain("○ Краткий ответ:");
+      expect(delivery).toContain("○ Основные пункты:");
+      expect(delivery).toContain("○ Мнение:");
+      expect(delivery).toContain("○ Полный отчет");
       expect(delivery).toContain("https://");
     }, 60000);
   });
@@ -125,7 +125,7 @@ describeE2E("Deep Research E2E (dry-run)", () => {
   describe("Error handling", () => {
     it("generates error message with run_id", () => {
       const error = messages.error("Test error", "test-run-id-123");
-      expect(error).toContain("❌");
+      expect(error).toContain("✂︎");
       expect(error).toContain("Test error");
       expect(error).toContain("test-run-id-123");
     });
@@ -260,7 +260,7 @@ process.exit(1);
 
     const deliverySuccess = await deliverResults(execResult, mockContext);
     expect(deliverySuccess).toBe(true);
-    expect(deliveredMessage).toContain("✅ Deep Research завершен");
+    expect(deliveredMessage).toContain("○ Deep Research");
     expect(deliveredMessage).toContain("Short answer to test topic");
     expect(deliveredMessage).toContain("Point 1");
     expect(deliveredMessage).toContain("Point 2");

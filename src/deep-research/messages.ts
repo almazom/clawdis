@@ -128,15 +128,18 @@ export const messages: DeepResearchMessages = {
       .map((b) => `• ${b}`)
       .join("\n");
 
-    const message = `○ Deep Research завершен
+    const message = `○ Deep Research
 
 ○ Краткий ответ:
+
 ${result.shortAnswer}
 
 ○ Основные пункты:
+
 ${bullets}
 
 ○ Мнение:
+
 ${result.opinion}
 
 ○ Полный отчет: ${result.publishUrl}`;

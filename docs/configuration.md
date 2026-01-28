@@ -142,10 +142,14 @@ Set `telegram.enabled: false` to disable automatic startup.
     proxy: "socks5://localhost:9050",
     webhookUrl: "https://example.com/telegram-webhook",
     webhookSecret: "secret",
-    webhookPath: "/telegram-webhook"
+    webhookPath: "/telegram-webhook",
+    multyPublish: true,
+    multyNotify: false
   }
 }
 ```
+
+`multyPublish` and `multyNotify` control whether the `/multy` pipeline includes the publish and notify steps (defaults: publish on, notify off).
 
 ### `discord` (bot transport)
 
