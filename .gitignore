@@ -224,3 +224,14 @@ tmp/
 
 # Multy lock files
 /tmp/clawdis/
+
+# Research documents and PDFs (local)
+*.pdf
+WEEKLY_HIGHLIGHTS_*.md
+circle_*.md
+leonid_*.md
+task*.md
+task202*.md
+
+# Publish module (internal)
+src/publish/
