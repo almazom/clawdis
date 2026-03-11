@@ -20,9 +20,17 @@ cd "${ROOT_DIR}"
 # Ensure secrets are available for the startup script.
 export CLAWDIS_ENV_FILE="${CLAWDIS_ENV_FILE:-${HOME}/.clawdis/secrets.env}"
 
-# Kill existing CLI gateway processes
+# Kill existing CLI gateway processes (dist + tsx variants).
+pkill -f "dist/index.js gateway" 2>/dev/null || true
 pkill -f "clawdis gateway" 2>/dev/null || true
-sleep 0.5
+pkill -f "clawdis.*gateway" 2>/dev/null || true
+for _ in {1..10}; do
+  if ! pgrep -f "dist/index.js gateway" >/dev/null 2>&1 \
+    && ! pgrep -f "clawdis gateway" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.3
+done
 
 # Bundle canvas assets
 log "==> bundle canvas a2ui"
