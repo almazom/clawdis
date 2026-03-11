@@ -377,15 +377,25 @@ Shows token usage per session when the agent reports it; set agent.contextTokens
     )
     .option("--play", "Auto-play the generated audio")
     .option("--json", "Output JSON format")
-    .action(async (text: string | undefined, opts: any) => {
-      setVerbose(Boolean(opts.verbose));
-      try {
-        await voiceCommand(text, opts, defaultRuntime);
-      } catch (err) {
-        defaultRuntime.error(String(err));
-        defaultRuntime.exit(1);
-      }
-    });
+    .action(
+      async (
+        text: string | undefined,
+        opts: {
+          json?: boolean;
+          play?: boolean;
+          session?: string;
+          verbose?: boolean;
+        },
+      ) => {
+        setVerbose(Boolean(opts.verbose));
+        try {
+          await voiceCommand(text, opts, defaultRuntime);
+        } catch (err) {
+          defaultRuntime.error(String(err));
+          defaultRuntime.exit(1);
+        }
+      },
+    );
 
   registerBrowserCli(program);
 
