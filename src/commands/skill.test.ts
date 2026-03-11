@@ -16,6 +16,32 @@ describe("skill commands", () => {
   let tempDir: string;
   let originalCwd: string;
 
+  function formatConsoleArgs(args: unknown[]): string {
+    return args.map(String).join(" ");
+  }
+
+  function getSkillPath(name: string): string {
+    return path.join(tempDir, "skills", name, "SKILL.md");
+  }
+
+  async function readSkillFile(name: string): Promise<string> {
+    return fs.readFile(getSkillPath(name), "utf-8");
+  }
+
+  async function captureLogs(run: () => Promise<void>): Promise<string> {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args) => logs.push(formatConsoleArgs(args));
+
+    try {
+      await run();
+    } finally {
+      console.log = originalLog;
+    }
+
+    return logs.join("\n");
+  }
+
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdis-skill-test-"));
     originalCwd = process.cwd();
@@ -56,8 +82,7 @@ ${description}
         workspace: tempDir,
       });
 
-      const skillPath = path.join(tempDir, "skills", "my-skill", "SKILL.md");
-      const content = await fs.readFile(skillPath, "utf-8");
+      const content = await readSkillFile("my-skill");
 
       expect(content).toContain("name: my-skill");
       expect(content).toContain("description: my-skill skill");
@@ -72,13 +97,7 @@ ${description}
         requires: ["bin:test-cli", "env:API_KEY"],
       });
 
-      const skillPath = path.join(
-        tempDir,
-        "skills",
-        "custom-skill",
-        "SKILL.md",
-      );
-      const content = await fs.readFile(skillPath, "utf-8");
+      const content = await readSkillFile("custom-skill");
 
       expect(content).toContain("name: custom-skill");
       expect(content).toContain("description: Custom description");
@@ -120,18 +139,9 @@ ${description}
       await createTestSkill("skill-one", "First test skill");
       await createTestSkill("skill-two", "Second test skill");
 
-      // Capture console output
-      const logs: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args) => logs.push(args.join(" "));
-
-      try {
+      const output = await captureLogs(async () => {
         await skillListCommand({ workspace: tempDir, format: "table" });
-      } finally {
-        console.log = originalLog;
-      }
-
-      const output = logs.join("\n");
+      });
       expect(output).toContain("skill-one");
       expect(output).toContain("skill-two");
       expect(output).toContain("First test skill");
@@ -140,17 +150,9 @@ ${description}
     it("lists skills in JSON format", async () => {
       await createTestSkill("json-skill", "JSON test skill");
 
-      const logs: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args) => logs.push(args.join(" "));
-
-      try {
+      const output = await captureLogs(async () => {
         await skillListCommand({ workspace: tempDir, format: "json" });
-      } finally {
-        console.log = originalLog;
-      }
-
-      const output = logs.join("\n");
+      });
       const parsed = JSON.parse(output);
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed.length).toBeGreaterThan(0);
@@ -159,17 +161,9 @@ ${description}
     it("lists skill names only", async () => {
       await createTestSkill("name-only", "Name test");
 
-      const logs: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args) => logs.push(args.join(" "));
-
-      try {
+      const output = await captureLogs(async () => {
         await skillListCommand({ workspace: tempDir, format: "names" });
-      } finally {
-        console.log = originalLog;
-      }
-
-      const output = logs.join("\n");
+      });
       expect(output).toContain("name-only");
     });
   });
@@ -178,17 +172,9 @@ ${description}
     it("shows status for a skill", async () => {
       await createTestSkill("status-skill", "Status test skill");
 
-      const logs: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args) => logs.push(args.join(" "));
-
-      try {
+      const output = await captureLogs(async () => {
         await skillStatusCommand("status-skill", { workspace: tempDir });
-      } finally {
-        console.log = originalLog;
-      }
-
-      const output = logs.join("\n");
+      });
       expect(output).toContain("status-skill");
       expect(output).toContain("active");
     });
@@ -204,17 +190,9 @@ ${description}
     it("validates all skills successfully", async () => {
       await createTestSkill("valid-skill", "Valid test skill");
 
-      const logs: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args) => logs.push(args.join(" "));
-
-      try {
+      const output = await captureLogs(async () => {
         await skillValidateCommand({ workspace: tempDir });
-      } finally {
-        console.log = originalLog;
-      }
-
-      const output = logs.join("\n");
+      });
       expect(output).toContain("✅");
       expect(output).toContain("valid");
     });
@@ -228,20 +206,12 @@ ${description}
         '{"clawdis":{"install":[{"id":"brew","kind":"brew","formula":"demo","bins":["demo"],"label":"Install demo"}]}}',
       );
 
-      const logs: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args) => logs.push(args.join(" "));
-
-      try {
+      const output = await captureLogs(async () => {
         await skillInstallCommand("install-skill", {
           workspace: tempDir,
           dryRun: true,
         });
-      } finally {
-        console.log = originalLog;
-      }
-
-      const output = logs.join("\n");
+      });
       expect(output).toContain("would install install-skill");
       expect(output).toContain("Install demo");
     });
@@ -251,30 +221,15 @@ ${description}
     it("disables and enables a skill", async () => {
       await createTestSkill("toggle-skill", "Toggle test skill");
 
-      // Disable
-      const disableLogs: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args) => disableLogs.push(args.join(" "));
-
-      try {
+      const disableOutput = await captureLogs(async () => {
         await skillDisableCommand("toggle-skill", { workspace: tempDir });
-      } finally {
-        console.log = originalLog;
-      }
+      });
+      expect(disableOutput).toContain("disabled");
 
-      expect(disableLogs.join(" ")).toContain("disabled");
-
-      // Enable
-      const enableLogs: string[] = [];
-      console.log = (...args) => enableLogs.push(args.join(" "));
-
-      try {
+      const enableOutput = await captureLogs(async () => {
         await skillEnableCommand("toggle-skill", { workspace: tempDir });
-      } finally {
-        console.log = originalLog;
-      }
-
-      expect(enableLogs.join(" ")).toContain("enabled");
+      });
+      expect(enableOutput).toContain("enabled");
     });
   });
 });

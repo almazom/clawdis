@@ -52,6 +52,8 @@ export type SkillInstallOptions = {
   workspace?: string;
 };
 
+type SkillRequirements = Record<string, string[]>;
+
 function resolveWorkspaceDir(opts?: { workspace?: string }): string {
   const cfg = loadConfig();
   const raw =
@@ -84,6 +86,45 @@ function truncate(str: string, maxLen: number): string {
   return `${str.slice(0, maxLen - 3)}...`;
 }
 
+function addRequirement(
+  requirements: SkillRequirements,
+  key: string,
+  value: string,
+): void {
+  const values = requirements[key] ?? [];
+  values.push(value);
+  requirements[key] = values;
+}
+
+function resolveRequirementKey(type: string): string {
+  switch (type) {
+    case "bin":
+      return "bins";
+    case "env":
+      return "env";
+    case "config":
+      return "config";
+    default:
+      return type;
+  }
+}
+
+function buildSkillRequirements(requirements: string[]): SkillRequirements {
+  const result: SkillRequirements = {};
+
+  for (const requirement of requirements) {
+    if (!requirement.includes(":")) {
+      addRequirement(result, "bins", requirement);
+      continue;
+    }
+
+    const [type, value] = requirement.split(":");
+    addRequirement(result, resolveRequirementKey(type), value);
+  }
+
+  return result;
+}
+
 function exitWithError(message: string): never {
   console.error(message);
   process.exit(1);
@@ -100,6 +141,18 @@ function findSkillStatusEntry(
     exitWithError(`Skill not found: ${skillName}`);
   }
   return entry;
+}
+
+async function updateSkillEnabledState(
+  skillName: string,
+  enabled: boolean,
+): Promise<void> {
+  const cfg = loadSkillConfig();
+  cfg.skills ??= {};
+  const skillConfig = cfg.skills[skillName] ?? {};
+  skillConfig.enabled = enabled;
+  cfg.skills[skillName] = skillConfig;
+  await writeConfigFile(cfg);
 }
 
 export async function skillListCommand(opts: SkillListOptions): Promise<void> {
@@ -198,12 +251,7 @@ export async function skillEnableCommand(
   skillName: string,
   _opts: SkillEnableOptions,
 ): Promise<void> {
-  const cfg = loadSkillConfig();
-  if (!cfg.skills) cfg.skills = {};
-  const skillConfig = cfg.skills[skillName] ?? {};
-  skillConfig.enabled = true;
-  cfg.skills[skillName] = skillConfig;
-  await writeConfigFile(cfg);
+  await updateSkillEnabledState(skillName, true);
   console.log(`✅ Skill enabled: ${skillName}`);
 }
 
@@ -211,12 +259,7 @@ export async function skillDisableCommand(
   skillName: string,
   _opts: SkillDisableOptions,
 ): Promise<void> {
-  const cfg = loadSkillConfig();
-  if (!cfg.skills) cfg.skills = {};
-  const skillConfig = cfg.skills[skillName] ?? {};
-  skillConfig.enabled = false;
-  cfg.skills[skillName] = skillConfig;
-  await writeConfigFile(cfg);
+  await updateSkillEnabledState(skillName, false);
   console.log(`⛔ Skill disabled: ${skillName}`);
 }
 
@@ -308,26 +351,7 @@ export async function skillCreateCommand(
   };
 
   if (opts.requires && opts.requires.length > 0) {
-    const requires: Record<string, string[]> = {};
-    for (const requirement of opts.requires) {
-      if (!requirement.includes(":")) {
-        if (!requires.bins) requires.bins = [];
-        requires.bins.push(requirement);
-        continue;
-      }
-
-      const [type, value] = requirement.split(":");
-      const key =
-        type === "bin"
-          ? "bins"
-          : type === "env"
-            ? "env"
-            : type === "config"
-              ? "config"
-              : type;
-      if (!requires[key]) requires[key] = [];
-      requires[key].push(value);
-    }
+    const requires = buildSkillRequirements(opts.requires);
     metadata.clawdis = { ...metadata.clawdis, requires };
   }
 
