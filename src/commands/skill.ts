@@ -200,8 +200,9 @@ export async function skillEnableCommand(
 ): Promise<void> {
   const cfg = loadSkillConfig();
   if (!cfg.skills) cfg.skills = {};
-  if (!cfg.skills[skillName]) cfg.skills[skillName] = {};
-  cfg.skills[skillName]!.enabled = true;
+  const skillConfig = cfg.skills[skillName] ?? {};
+  skillConfig.enabled = true;
+  cfg.skills[skillName] = skillConfig;
   await writeConfigFile(cfg);
   console.log(`✅ Skill enabled: ${skillName}`);
 }
@@ -212,8 +213,9 @@ export async function skillDisableCommand(
 ): Promise<void> {
   const cfg = loadSkillConfig();
   if (!cfg.skills) cfg.skills = {};
-  if (!cfg.skills[skillName]) cfg.skills[skillName] = {};
-  cfg.skills[skillName]!.enabled = false;
+  const skillConfig = cfg.skills[skillName] ?? {};
+  skillConfig.enabled = false;
+  cfg.skills[skillName] = skillConfig;
   await writeConfigFile(cfg);
   console.log(`⛔ Skill disabled: ${skillName}`);
 }
@@ -286,11 +288,15 @@ export async function skillCreateCommand(
   const skillsDir = path.join(workspaceDir, "skills");
   const skillDir = path.join(skillsDir, name);
 
+  let skillExists = true;
   try {
     await fs.access(skillDir);
-    exitWithError(`❌ Skill already exists: ${skillDir}`);
   } catch {
-    // Directory does not exist yet.
+    skillExists = false;
+  }
+
+  if (skillExists) {
+    exitWithError(`❌ Skill already exists: ${skillDir}`);
   }
 
   await fs.mkdir(skillDir, { recursive: true });

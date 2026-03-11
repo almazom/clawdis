@@ -6,6 +6,7 @@ import {
   skillCreateCommand,
   skillDisableCommand,
   skillEnableCommand,
+  skillInstallCommand,
   skillListCommand,
   skillStatusCommand,
   skillValidateCommand,
@@ -19,8 +20,6 @@ describe("skill commands", () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdis-skill-test-"));
     originalCwd = process.cwd();
     process.chdir(tempDir);
-
-    // Create skills directory
     await fs.mkdir(path.join(tempDir, "skills"), { recursive: true });
   });
 
@@ -32,6 +31,7 @@ describe("skill commands", () => {
   async function createTestSkill(
     name: string,
     description = "Test skill",
+    metadata?: string,
   ): Promise<void> {
     const skillDir = path.join(tempDir, "skills", name);
     await fs.mkdir(skillDir, { recursive: true });
@@ -40,7 +40,7 @@ describe("skill commands", () => {
       `---
 name: ${name}
 description: ${description}
----
+${metadata ? `metadata: ${metadata}\n` : ""}---
 
 # ${name}
 
@@ -96,7 +96,7 @@ ${description}
       let exitCode: number | undefined;
 
       console.error = (...args) => errors.push(args.join(" "));
-      const originalExit = process.exit;
+      const originalExit = process.exit.bind(process);
       process.exit = ((code?: number) => {
         exitCode = code;
         throw new Error(`Exit ${code}`);
@@ -217,6 +217,33 @@ ${description}
       const output = logs.join("\n");
       expect(output).toContain("✅");
       expect(output).toContain("valid");
+    });
+  });
+
+  describe("skillInstallCommand", () => {
+    it("prints dry-run installer info", async () => {
+      await createTestSkill(
+        "install-skill",
+        "Install test skill",
+        '{"clawdis":{"install":[{"id":"brew","kind":"brew","formula":"demo","bins":["demo"],"label":"Install demo"}]}}',
+      );
+
+      const logs: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args) => logs.push(args.join(" "));
+
+      try {
+        await skillInstallCommand("install-skill", {
+          workspace: tempDir,
+          dryRun: true,
+        });
+      } finally {
+        console.log = originalLog;
+      }
+
+      const output = logs.join("\n");
+      expect(output).toContain("would install install-skill");
+      expect(output).toContain("Install demo");
     });
   });
 
