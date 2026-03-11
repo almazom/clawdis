@@ -56,6 +56,23 @@ The tool provides a confidence score (0-100%) based on:
 - Expect a reply in Telegram; check `/tmp/clawdis/clawdis-YYYY-MM-DD.log` if it fails.
 - Before asking the user to manually validate Telegram output, run a telega_v2 E2E check yourself and compare against the relevant spec/template for the task. Only ask for manual confirmation if the E2E tool is blocked or unavailable.
 
+## Wake Up Telegram Bot
+- Before sending anything, run `restart-ai --check-only --json`. If confidence is below 95, run `restart-ai`.
+- Confirm the live bot username with `pnpm clawdis health` and read the `Telegram: ok (@...)` line.
+- To wake the bot from Telegram MTProto, send `/start` with the explicit user profile instead of relying on telega defaults:
+
+```bash
+telega --user almazom --target @Lana_smartai_bot --json "/start"
+```
+
+- Verify the wake-up by fetching the recent chat history:
+
+```bash
+telega --user almazom --fetch @Lana_smartai_bot 5
+```
+
+- Expected result: the cache/fetch should include your `/start` message and a bot reply like `Привет! Готов работать. Что нужно?`.
+
 ## Telegram Auto-Categorization
 - Automatic LLM-based message categorization (web search, deep research, none) is **disabled by default**.
 - To enable, set `TELEGRAM_AUTO_CATEGORIZE_ENABLED=true` in `.env` or `telegram.autoCategorize: true` in `~/.clawdis/clawdis.json`.
