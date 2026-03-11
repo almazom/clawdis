@@ -33,6 +33,8 @@ export type ClawdisSkillMetadata = {
     config?: string[];
   };
   install?: SkillInstallSpec[];
+  commands?: SkillCommand[];
+  hooks?: SkillHook[];
 };
 
 export type SkillsInstallPreferences = {
@@ -127,6 +129,110 @@ function normalizeStringList(input: unknown): string[] {
       .filter(Boolean);
   }
   return [];
+}
+
+export type SkillCommandArgument = {
+  name: string;
+  description?: string;
+  required?: boolean;
+};
+
+export type SkillCommandOption = {
+  flags: string;
+  description?: string;
+  defaultValue?: unknown;
+};
+
+export type SkillCommand = {
+  name: string;
+  description: string;
+  arguments?: SkillCommandArgument[];
+  options?: SkillCommandOption[];
+  handler: string;
+};
+
+export type SkillHook = {
+  event: string;
+  handler: string;
+  filter?: Record<string, unknown>;
+};
+
+export type SkillCommandsConfig = {
+  commands?: SkillCommand[];
+  hooks?: SkillHook[];
+};
+
+function parseSkillCommandArgument(
+  input: unknown,
+): SkillCommandArgument | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const raw = input as Record<string, unknown>;
+  if (typeof raw.name !== "string") return undefined;
+
+  return {
+    name: raw.name,
+    description:
+      typeof raw.description === "string" ? raw.description : undefined,
+    required: typeof raw.required === "boolean" ? raw.required : undefined,
+  };
+}
+
+function parseSkillCommandOption(
+  input: unknown,
+): SkillCommandOption | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const raw = input as Record<string, unknown>;
+  if (typeof raw.flags !== "string") return undefined;
+
+  return {
+    flags: raw.flags,
+    description:
+      typeof raw.description === "string" ? raw.description : undefined,
+    defaultValue: raw.defaultValue,
+  };
+}
+
+function parseSkillCommand(input: unknown): SkillCommand | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const raw = input as Record<string, unknown>;
+  if (typeof raw.name !== "string") return undefined;
+  if (typeof raw.description !== "string") return undefined;
+  if (typeof raw.handler !== "string") return undefined;
+
+  const argumentsList = Array.isArray(raw.arguments)
+    ? raw.arguments
+        .map((entry) => parseSkillCommandArgument(entry))
+        .filter((entry): entry is SkillCommandArgument => entry !== undefined)
+    : [];
+  const optionsList = Array.isArray(raw.options)
+    ? raw.options
+        .map((entry) => parseSkillCommandOption(entry))
+        .filter((entry): entry is SkillCommandOption => entry !== undefined)
+    : [];
+
+  return {
+    name: raw.name,
+    description: raw.description,
+    arguments: argumentsList.length > 0 ? argumentsList : undefined,
+    options: optionsList.length > 0 ? optionsList : undefined,
+    handler: raw.handler,
+  };
+}
+
+function parseSkillHook(input: unknown): SkillHook | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const raw = input as Record<string, unknown>;
+  if (typeof raw.event !== "string") return undefined;
+  if (typeof raw.handler !== "string") return undefined;
+
+  return {
+    event: raw.event,
+    handler: raw.handler,
+    filter:
+      raw.filter && typeof raw.filter === "object"
+        ? (raw.filter as Record<string, unknown>)
+        : undefined,
+  };
 }
 
 function parseInstallSpec(input: unknown): SkillInstallSpec | undefined {
@@ -256,6 +362,18 @@ function resolveClawdisMetadata(
     const install = installRaw
       .map((entry) => parseInstallSpec(entry))
       .filter((entry): entry is SkillInstallSpec => Boolean(entry));
+    const commandsRaw = Array.isArray(clawdisObj.commands)
+      ? (clawdisObj.commands as unknown[])
+      : [];
+    const commands = commandsRaw
+      .map((entry) => parseSkillCommand(entry))
+      .filter((entry): entry is SkillCommand => entry !== undefined);
+    const hooksRaw = Array.isArray(clawdisObj.hooks)
+      ? (clawdisObj.hooks as unknown[])
+      : [];
+    const hooks = hooksRaw
+      .map((entry) => parseSkillHook(entry))
+      .filter((entry): entry is SkillHook => entry !== undefined);
     return {
       always:
         typeof clawdisObj.always === "boolean" ? clawdisObj.always : undefined,
@@ -281,6 +399,8 @@ function resolveClawdisMetadata(
           }
         : undefined,
       install: install.length > 0 ? install : undefined,
+      commands: commands.length > 0 ? commands : undefined,
+      hooks: hooks.length > 0 ? hooks : undefined,
     };
   } catch {
     return undefined;
@@ -547,4 +667,20 @@ export function filterWorkspaceSkillEntries(
   config?: ClawdisConfig,
 ): SkillEntry[] {
   return filterSkillEntries(entries, config);
+}
+
+export function resolveSkillCommands(
+  entry: SkillEntry,
+): SkillCommandsConfig | undefined {
+  const commands = entry.clawdis?.commands ?? [];
+  const hooks = entry.clawdis?.hooks ?? [];
+
+  if (commands.length === 0 && hooks.length === 0) {
+    return undefined;
+  }
+
+  return {
+    commands: commands.length > 0 ? [...commands] : undefined,
+    hooks: hooks.length > 0 ? [...hooks] : undefined,
+  };
 }
