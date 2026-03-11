@@ -20,6 +20,7 @@ import { registerGatewayCli } from "./gateway-cli.js";
 import { registerHooksCli } from "./hooks-cli.js";
 import { registerNodesCli } from "./nodes-cli.js";
 import { forceFreePort } from "./ports.js";
+import { registerSkillCli } from "./skill-cli.js";
 
 export { forceFreePort };
 
@@ -247,6 +248,7 @@ Examples:
   registerCronCli(program);
   registerDnsCli(program);
   registerHooksCli(program);
+  registerSkillCli(program);
 
   program
     .command("status")
@@ -369,7 +371,10 @@ Shows token usage per session when the agent reports it; set agent.contextTokens
     .description(
       "Generate TTS voice message from text or last message (requires TTS configuration)",
     )
-    .option("--session <key>", "Session to retrieve last message from (default: main)")
+    .option(
+      "--session <key>",
+      "Session to retrieve last message from (default: main)",
+    )
     .option("--play", "Auto-play the generated audio")
     .option("--json", "Output JSON format")
     .action(async (text: string | undefined, opts: any) => {
